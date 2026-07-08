@@ -1,4 +1,5 @@
-const STORAGE_KEY = "ciglog-v1";
+const LEGACY_STORAGE_KEY = "ciglog-v1";
+const STORAGE_KEY = "cigapp-v1";
 const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
 const tags = ["alkohol", "stresovy den", "kava", "vecer vonku", "praca", "nuda"];
@@ -42,15 +43,16 @@ const els = {
   exportCsvButton: document.querySelector("#exportCsvButton"),
   clearDataButton: document.querySelector("#clearDataButton"),
   authForm: document.querySelector("#authForm"),
-  emailInput: document.querySelector("#emailInput"),
-  pinInput: document.querySelector("#pinInput"),
+  usernameInput: document.querySelector("#usernameInput"),
+  passwordInput: document.querySelector("#passwordInput"),
   signOutButton: document.querySelector("#signOutButton"),
   syncStatus: document.querySelector("#syncStatus"),
 };
 
 function loadState() {
   try {
-    return { ...initialState, ...JSON.parse(localStorage.getItem(STORAGE_KEY)) };
+    const stored = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+    return { ...initialState, ...JSON.parse(stored) };
   } catch {
     return { ...initialState };
   }
@@ -58,6 +60,7 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
 function setSyncStatus(message) {
@@ -66,6 +69,18 @@ function setSyncStatus(message) {
 
 function remoteEnabled() {
   return Boolean(supabaseClient && currentUser && remoteReady);
+}
+
+function normalizeUsername(value) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+}
+
+function authEmailForUsername(username) {
+  return `${username}@cigapp.invalid`;
+}
+
+function displayNameForUser(user) {
+  return user?.user_metadata?.username || user?.email?.split("@")[0] || "pouzivatel";
 }
 
 function id(prefix) {
@@ -224,11 +239,11 @@ function renderAuth() {
   els.authForm.classList.toggle("hidden", Boolean(currentUser));
   els.signOutButton.classList.toggle("hidden", !currentUser);
   if (currentUser && remoteReady) {
-    setSyncStatus(`Synchronizovane: ${currentUser.email}`);
+    setSyncStatus(`Synchronizovane: ${displayNameForUser(currentUser)}`);
   } else if (currentUser) {
-    setSyncStatus(`Prihlasene: ${currentUser.email}. Nacitavam data...`);
+    setSyncStatus(`Prihlasene: ${displayNameForUser(currentUser)}. Nacitavam data...`);
   } else {
-    setSyncStatus("Lokalny rezim. Prihlas sa emailom a PINom.");
+    setSyncStatus("Lokalny rezim. Prihlas sa menom a heslom.");
   }
 }
 
@@ -320,7 +335,7 @@ async function loadRemoteState() {
   if (!remoteHasData && localHasData) {
     remoteReady = true;
     await uploadFullState();
-    setSyncStatus(`Lokalne data boli prenesene do Supabase: ${currentUser.email}`);
+    setSyncStatus(`Lokalne data boli prenesene do Supabase: ${displayNameForUser(currentUser)}`);
   } else {
     state = {
       packs: packs.map(rowToPack),
@@ -467,7 +482,7 @@ function exportCsv() {
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `ciglog-${dayKey()}.csv`;
+  link.download = `cigapp-${dayKey()}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -511,22 +526,44 @@ els.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!supabaseClient) return;
 
-  const email = els.emailInput.value.trim();
-  const password = els.pinInput.value.trim();
-  if (!email || !password) return;
+  const rawUsername = els.usernameInput.value;
+  const username = normalizeUsername(rawUsername);
+  const password = els.passwordInput.value;
+  if (!username || !password) return;
 
-  if (password.length < 6) {
-    setSyncStatus("PIN musi mat aspon 6 znakov.");
+  if (username.length < 3) {
+    setSyncStatus("Meno musi mat aspon 3 znaky.");
     return;
   }
 
+  if (password.length < 6) {
+    setSyncStatus("Heslo musi mat aspon 6 znakov.");
+    return;
+  }
+
+  if (username !== rawUsername.trim().toLowerCase()) {
+    els.usernameInput.value = username;
+    setSyncStatus("Meno moze obsahovat len pismena bez diakritiky, cisla, _ alebo -.");
+    return;
+  }
+
+  const email = authEmailForUsername(username);
   setSyncStatus("Prihlasujem...");
   let { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
   if (error) {
-    const signup = await supabaseClient.auth.signUp({ email, password });
+    const signup = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: { data: { username } },
+    });
     data = signup.data;
     error = signup.error;
+
+    if (error && /already|registered|exists/i.test(error.message)) {
+      setSyncStatus("Toto meno uz existuje. Skus ine meno alebo spravne heslo.");
+      return;
+    }
   }
 
   if (error) {
@@ -536,12 +573,12 @@ els.authForm.addEventListener("submit", async (event) => {
 
   currentUser = data.user || data.session?.user || null;
   remoteReady = false;
-  els.pinInput.value = "";
+  els.passwordInput.value = "";
 
   if (currentUser) {
     await loadRemoteState();
   } else {
-    setSyncStatus("Ucet je vytvoreny. Ak Supabase vyzaduje potvrdenie emailu, potvrdenie treba dokoncit v emaili.");
+    setSyncStatus("Ucet je vytvoreny, ale Supabase vyzaduje potvrdenie emailu. Vypni email confirmation v Supabase.");
   }
 });
 
