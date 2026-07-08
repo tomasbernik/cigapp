@@ -26,23 +26,14 @@ This creates:
 
 All three tables use Supabase Auth user IDs and Row Level Security, so the public browser key cannot read or write another user's data.
 
-## 3. Enable an auth method
+## 3. Enable auth
 
-Use email OTP codes:
+Use email and password auth. In the app the password field is shown as a PIN.
 
 1. Open **Authentication > Providers**.
 2. Enable **Email**.
-3. Open **Authentication > Email Templates**.
-4. Edit the magic link template so the email clearly shows the OTP token.
-
-Minimal email body:
-
-```html
-<p>Tvoj CigLog kod je:</p>
-<h2>{{ .Token }}</h2>
-```
-
-5. In **Authentication > URL Configuration**, add the app URL to allowed redirect URLs.
+3. If you want first-time registration to work without clicking an email, turn off mandatory email confirmation in the Email provider settings.
+4. In **Authentication > URL Configuration**, add the app URL to allowed redirect URLs.
 
 For local testing, add:
 

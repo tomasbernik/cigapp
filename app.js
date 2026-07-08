@@ -1,5 +1,4 @@
 const STORAGE_KEY = "ciglog-v1";
-const AUTH_EMAIL_KEY = "ciglog-auth-email";
 const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
 const tags = ["alkohol", "stresovy den", "kava", "vecer vonku", "praca", "nuda"];
@@ -15,7 +14,6 @@ const initialState = { packs: [], entries: [], days: {} };
 let state = loadState();
 let currentUser = null;
 let remoteReady = false;
-let pendingEmail = localStorage.getItem(AUTH_EMAIL_KEY) || "";
 const supabaseClient =
   window.supabase?.createClient?.(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
@@ -45,9 +43,7 @@ const els = {
   clearDataButton: document.querySelector("#clearDataButton"),
   authForm: document.querySelector("#authForm"),
   emailInput: document.querySelector("#emailInput"),
-  otpForm: document.querySelector("#otpForm"),
-  otpInput: document.querySelector("#otpInput"),
-  changeEmailButton: document.querySelector("#changeEmailButton"),
+  pinInput: document.querySelector("#pinInput"),
   signOutButton: document.querySelector("#signOutButton"),
   syncStatus: document.querySelector("#syncStatus"),
 };
@@ -220,23 +216,19 @@ function render() {
 function renderAuth() {
   if (!supabaseClient) {
     els.authForm.classList.add("hidden");
-    els.otpForm.classList.add("hidden");
     els.signOutButton.classList.add("hidden");
     setSyncStatus("Lokalny rezim. Supabase klient sa nenacital.");
     return;
   }
 
-  els.authForm.classList.toggle("hidden", Boolean(currentUser) || Boolean(pendingEmail));
-  els.otpForm.classList.toggle("hidden", Boolean(currentUser) || !pendingEmail);
+  els.authForm.classList.toggle("hidden", Boolean(currentUser));
   els.signOutButton.classList.toggle("hidden", !currentUser);
   if (currentUser && remoteReady) {
     setSyncStatus(`Synchronizovane: ${currentUser.email}`);
   } else if (currentUser) {
     setSyncStatus(`Prihlasene: ${currentUser.email}. Nacitavam data...`);
-  } else if (pendingEmail) {
-    setSyncStatus(`Kod bol poslany na ${pendingEmail}. Zadaj ho tu v appke.`);
   } else {
-    setSyncStatus("Lokalny rezim. Po prihlaseni kodom sa data ulozia do Supabase.");
+    setSyncStatus("Lokalny rezim. Prihlas sa emailom a PINom.");
   }
 }
 
@@ -520,58 +512,37 @@ els.authForm.addEventListener("submit", async (event) => {
   if (!supabaseClient) return;
 
   const email = els.emailInput.value.trim();
-  if (!email) return;
+  const password = els.pinInput.value.trim();
+  if (!email || !password) return;
 
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: { shouldCreateUser: true },
-  });
+  if (password.length < 6) {
+    setSyncStatus("PIN musi mat aspon 6 znakov.");
+    return;
+  }
+
+  setSyncStatus("Prihlasujem...");
+  let { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    const signup = await supabaseClient.auth.signUp({ email, password });
+    data = signup.data;
+    error = signup.error;
+  }
+
   if (error) {
     setSyncStatus(`Login chyba: ${error.message}`);
     return;
   }
 
-  pendingEmail = email;
-  localStorage.setItem(AUTH_EMAIL_KEY, pendingEmail);
-  els.otpInput.value = "";
-  renderAuth();
-});
-
-els.otpForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!supabaseClient || !pendingEmail) return;
-
-  const token = els.otpInput.value.trim().replace(/\s/g, "");
-  if (!token) return;
-
-  const { data, error } = await supabaseClient.auth.verifyOtp({
-    email: pendingEmail,
-    token,
-    type: "email",
-  });
-
-  if (error) {
-    setSyncStatus(`Kod nesedi: ${error.message}`);
-    return;
-  }
-
-  pendingEmail = "";
-  localStorage.removeItem(AUTH_EMAIL_KEY);
-  els.otpInput.value = "";
   currentUser = data.user || data.session?.user || null;
   remoteReady = false;
+  els.pinInput.value = "";
+
   if (currentUser) {
     await loadRemoteState();
   } else {
-    render();
+    setSyncStatus("Ucet je vytvoreny. Ak Supabase vyzaduje potvrdenie emailu, potvrdenie treba dokoncit v emaili.");
   }
-});
-
-els.changeEmailButton.addEventListener("click", () => {
-  pendingEmail = "";
-  localStorage.removeItem(AUTH_EMAIL_KEY);
-  els.otpInput.value = "";
-  renderAuth();
 });
 
 els.signOutButton.addEventListener("click", async () => {
@@ -579,8 +550,6 @@ els.signOutButton.addEventListener("click", async () => {
   await supabaseClient.auth.signOut();
   currentUser = null;
   remoteReady = false;
-  pendingEmail = "";
-  localStorage.removeItem(AUTH_EMAIL_KEY);
   state = loadState();
   renderCurrentDay();
   render();
