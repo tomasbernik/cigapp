@@ -1,4 +1,6 @@
 const STORAGE_KEY = "ciglog-v1";
+const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
 const tags = ["alkohol", "stresovy den", "kava", "vecer vonku", "praca", "nuda"];
 const blocks = [
   { id: "rano", label: "Rano", from: 5, to: 9 },
@@ -10,6 +12,12 @@ const blocks = [
 
 const initialState = { packs: [], entries: [], days: {} };
 let state = loadState();
+let currentUser = null;
+let remoteReady = false;
+const supabaseClient =
+  window.supabase?.createClient?.(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  }) || null;
 
 const els = {
   currentCount: document.querySelector("#currentCount"),
@@ -33,6 +41,10 @@ const els = {
   historyList: document.querySelector("#historyList"),
   exportCsvButton: document.querySelector("#exportCsvButton"),
   clearDataButton: document.querySelector("#clearDataButton"),
+  authForm: document.querySelector("#authForm"),
+  emailInput: document.querySelector("#emailInput"),
+  signOutButton: document.querySelector("#signOutButton"),
+  syncStatus: document.querySelector("#syncStatus"),
 };
 
 function loadState() {
@@ -45,6 +57,14 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function setSyncStatus(message) {
+  els.syncStatus.textContent = message;
+}
+
+function remoteEnabled() {
+  return Boolean(supabaseClient && currentUser && remoteReady);
 }
 
 function id(prefix) {
@@ -186,12 +206,171 @@ function renderHistory() {
 }
 
 function render() {
+  renderAuth();
   renderStatus();
   renderOverview();
   renderHistory();
 }
 
-function addEntry(remaining) {
+function renderAuth() {
+  if (!supabaseClient) {
+    els.authForm.classList.add("hidden");
+    els.signOutButton.classList.add("hidden");
+    setSyncStatus("Lokalny rezim. Supabase klient sa nenacital.");
+    return;
+  }
+
+  els.authForm.classList.toggle("hidden", Boolean(currentUser));
+  els.signOutButton.classList.toggle("hidden", !currentUser);
+  if (currentUser && remoteReady) {
+    setSyncStatus(`Synchronizovane: ${currentUser.email}`);
+  } else if (currentUser) {
+    setSyncStatus(`Prihlasene: ${currentUser.email}. Nacitavam data...`);
+  } else {
+    setSyncStatus("Lokalny rezim. Po prihlaseni sa data ulozia do Supabase.");
+  }
+}
+
+function packToRow(pack) {
+  return {
+    id: pack.id,
+    user_id: currentUser.id,
+    capacity: pack.capacity,
+    active: pack.active,
+    opened_at: pack.openedAt,
+  };
+}
+
+function entryToRow(entry) {
+  return {
+    id: entry.id,
+    user_id: currentUser.id,
+    pack_id: entry.packId,
+    remaining: entry.remaining,
+    created_at: entry.createdAt,
+  };
+}
+
+function dayToRow(key, day) {
+  return {
+    user_id: currentUser.id,
+    day: key,
+    tags: day.tags || [],
+    stress: day.stress || 0,
+    note: day.note || "",
+    updated_at: day.updatedAt || new Date().toISOString(),
+  };
+}
+
+function rowToPack(row) {
+  return {
+    id: row.id,
+    capacity: row.capacity,
+    active: row.active,
+    openedAt: row.opened_at,
+  };
+}
+
+function rowToEntry(row) {
+  return {
+    id: row.id,
+    packId: row.pack_id,
+    remaining: row.remaining,
+    createdAt: row.created_at,
+  };
+}
+
+function rowsToDays(rows) {
+  return Object.fromEntries(
+    rows.map((row) => [
+      row.day,
+      {
+        tags: row.tags || [],
+        stress: row.stress || 0,
+        note: row.note || "",
+        updatedAt: row.updated_at,
+      },
+    ]),
+  );
+}
+
+async function loadRemoteState() {
+  if (!supabaseClient || !currentUser) return;
+  remoteReady = false;
+  renderAuth();
+
+  const [{ data: packs, error: packsError }, { data: entries, error: entriesError }, { data: days, error: daysError }] =
+    await Promise.all([
+      supabaseClient.from("packs").select("*").order("opened_at", { ascending: true }),
+      supabaseClient.from("entries").select("*").order("created_at", { ascending: true }),
+      supabaseClient.from("days").select("*").order("day", { ascending: true }),
+    ]);
+
+  const error = packsError || entriesError || daysError;
+  if (error) {
+    setSyncStatus(`Supabase chyba: ${error.message}`);
+    remoteReady = false;
+    return;
+  }
+
+  const localHasData = state.packs.length || state.entries.length || Object.keys(state.days).length;
+  const remoteHasData = packs.length || entries.length || days.length;
+
+  if (!remoteHasData && localHasData) {
+    remoteReady = true;
+    await uploadFullState();
+    setSyncStatus(`Lokalne data boli prenesene do Supabase: ${currentUser.email}`);
+  } else {
+    state = {
+      packs: packs.map(rowToPack),
+      entries: entries.map(rowToEntry),
+      days: rowsToDays(days),
+    };
+    saveState();
+    remoteReady = true;
+  }
+
+  renderCurrentDay();
+  render();
+}
+
+async function syncRemote(operation) {
+  if (!remoteEnabled()) return true;
+
+  const { error } = await operation();
+  if (error) {
+    setSyncStatus(`Supabase chyba: ${error.message}`);
+    return false;
+  }
+
+  renderAuth();
+  return true;
+}
+
+async function uploadFullState() {
+  if (!remoteEnabled()) return true;
+
+  const packRows = state.packs.map(packToRow);
+  const entryRows = state.entries.map(entryToRow);
+  const dayRows = Object.entries(state.days).map(([key, day]) => dayToRow(key, day));
+
+  const operations = [];
+  if (packRows.length) operations.push(supabaseClient.from("packs").upsert(packRows));
+  if (entryRows.length) operations.push(supabaseClient.from("entries").upsert(entryRows));
+  if (dayRows.length) operations.push(supabaseClient.from("days").upsert(dayRows));
+
+  const results = await Promise.all(operations);
+  const error = results.find((result) => result.error)?.error;
+  if (error) {
+    setSyncStatus(`Supabase chyba: ${error.message}`);
+    return false;
+  }
+
+  renderAuth();
+  return true;
+}
+
+async function addEntry(remaining) {
   const pack = activePack();
   if (!pack) {
     els.saveHint.textContent = "Najprv otvor novu krabicku.";
@@ -209,19 +388,21 @@ function addEntry(remaining) {
     return;
   }
 
-  state.entries.push({
+  const entry = {
     id: id("entry"),
     packId: pack.id,
     remaining,
     createdAt: new Date().toISOString(),
-  });
+  };
+  state.entries.push(entry);
   saveState();
+  await syncRemote(() => supabaseClient.from("entries").upsert(entryToRow(entry)));
   els.stateForm.reset();
   els.saveHint.textContent = "Stav ulozeny.";
   render();
 }
 
-function openPack(capacity) {
+async function openPack(capacity) {
   state.packs = state.packs.map((pack) => ({ ...pack, active: false }));
   const pack = {
     id: id("pack"),
@@ -237,10 +418,18 @@ function openPack(capacity) {
     createdAt: pack.openedAt,
   });
   saveState();
+  await syncRemote(async () => {
+    const inactiveRows = state.packs.filter((item) => item.id !== pack.id).map(packToRow);
+    const operations = [supabaseClient.from("packs").upsert(packToRow(pack))];
+    if (inactiveRows.length) operations.push(supabaseClient.from("packs").upsert(inactiveRows));
+    operations.push(supabaseClient.from("entries").upsert(entryToRow(state.entries.at(-1))));
+    const results = await Promise.all(operations);
+    return { error: results.find((result) => result.error)?.error || null };
+  });
   render();
 }
 
-function saveDayContext() {
+async function saveDayContext() {
   state.days[dayKey()] = {
     tags: [...els.tagGrid.querySelectorAll("input:checked")].map((input) => input.value),
     stress: Number(els.stressInput.value),
@@ -248,6 +437,7 @@ function saveDayContext() {
     updatedAt: new Date().toISOString(),
   };
   saveState();
+  await syncRemote(() => supabaseClient.from("days").upsert(dayToRow(dayKey(), state.days[dayKey()])));
 }
 
 function exportCsv() {
@@ -299,10 +489,43 @@ els.contextForm.addEventListener("submit", (event) => {
 
 els.periodSelect.addEventListener("change", renderOverview);
 els.exportCsvButton.addEventListener("click", exportCsv);
-els.clearDataButton.addEventListener("click", () => {
-  if (!confirm("Vymazat vsetky lokalne data?")) return;
+els.clearDataButton.addEventListener("click", async () => {
+  if (!confirm("Vymazat vsetky data?")) return;
   state = { packs: [], entries: [], days: {} };
   saveState();
+  if (remoteEnabled()) {
+    const [{ error: entriesError }, { error: daysError }, { error: packsError }] = await Promise.all([
+      supabaseClient.from("entries").delete().eq("user_id", currentUser.id),
+      supabaseClient.from("days").delete().eq("user_id", currentUser.id),
+      supabaseClient.from("packs").delete().eq("user_id", currentUser.id),
+    ]);
+    const error = entriesError || daysError || packsError;
+    if (error) setSyncStatus(`Supabase chyba: ${error.message}`);
+  }
+  renderCurrentDay();
+  render();
+});
+
+els.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!supabaseClient) return;
+
+  const email = els.emailInput.value.trim();
+  if (!email) return;
+
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin + window.location.pathname },
+  });
+  setSyncStatus(error ? `Login chyba: ${error.message}` : "Skontroluj email a otvor prihlasovaci link.");
+});
+
+els.signOutButton.addEventListener("click", async () => {
+  if (!supabaseClient) return;
+  await supabaseClient.auth.signOut();
+  currentUser = null;
+  remoteReady = false;
+  state = loadState();
   renderCurrentDay();
   render();
 });
@@ -310,6 +533,28 @@ els.clearDataButton.addEventListener("click", () => {
 renderTags();
 renderCurrentDay();
 render();
+
+if (supabaseClient) {
+  supabaseClient.auth.getSession().then(({ data }) => {
+    currentUser = data.session?.user || null;
+    if (currentUser) {
+      loadRemoteState();
+    } else {
+      render();
+    }
+  });
+
+  supabaseClient.auth.onAuthStateChange((_event, session) => {
+    const nextUser = session?.user || null;
+    const changedUser = nextUser?.id !== currentUser?.id;
+    currentUser = nextUser;
+    if (currentUser && changedUser) {
+      loadRemoteState();
+    } else {
+      render();
+    }
+  });
+}
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
