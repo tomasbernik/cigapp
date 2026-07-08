@@ -29,7 +29,10 @@ const els = {
   remainingInput: document.querySelector("#remainingInput"),
   saveHint: document.querySelector("#saveHint"),
   packForm: document.querySelector("#packForm"),
+  openPackToggle: document.querySelector("#openPackToggle"),
+  packOptions: document.querySelector("#packOptions"),
   capacityInput: document.querySelector("#capacityInput"),
+  capacityChoices: [...document.querySelectorAll('input[name="capacityChoice"]')],
   tagGrid: document.querySelector("#tagGrid"),
   contextForm: document.querySelector("#contextForm"),
   stressInput: document.querySelector("#stressInput"),
@@ -445,6 +448,21 @@ async function openPack(capacity) {
   render();
 }
 
+function selectedCapacity() {
+  const choice = els.capacityChoices.find((input) => input.checked)?.value || "40";
+  if (choice === "custom") return Number(els.capacityInput.value);
+  return Number(choice);
+}
+
+function renderPackOptions() {
+  const customSelected = els.capacityChoices.some((input) => input.checked && input.value === "custom");
+  els.capacityInput.classList.toggle("hidden", !customSelected);
+  els.capacityInput.required = customSelected;
+  if (!customSelected) {
+    els.capacityInput.value = selectedCapacity();
+  }
+}
+
 async function saveDayContext() {
   state.days[dayKey()] = {
     tags: [...els.tagGrid.querySelectorAll("input:checked")].map((input) => input.value),
@@ -494,7 +512,15 @@ els.stateForm.addEventListener("submit", (event) => {
 
 els.packForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  openPack(Number(els.capacityInput.value));
+  openPack(selectedCapacity());
+});
+
+els.openPackToggle.addEventListener("click", () => {
+  els.packOptions.classList.toggle("hidden");
+});
+
+els.capacityChoices.forEach((input) => {
+  input.addEventListener("change", renderPackOptions);
 });
 
 els.contextForm.addEventListener("submit", (event) => {
@@ -594,6 +620,7 @@ els.signOutButton.addEventListener("click", async () => {
 
 renderTags();
 renderCurrentDay();
+renderPackOptions();
 render();
 
 if (supabaseClient) {

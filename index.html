@@ -53,9 +53,16 @@
         <section class="tools-grid">
           <form class="tool-panel" id="packForm">
             <h2>Nova krabicka</h2>
-            <label for="capacityInput">Velkost krabicky</label>
-            <div class="number-row">
-              <input id="capacityInput" name="capacity" type="number" min="1" step="1" inputmode="numeric" value="20" required>
+            <button class="open-pack-toggle" id="openPackToggle" type="button">Otvorit novu krabicku</button>
+            <div class="pack-options hidden" id="packOptions">
+              <fieldset class="capacity-options">
+                <legend>Velkost krabicky</legend>
+                <label><input type="radio" name="capacityChoice" value="20">20 ks</label>
+                <label><input type="radio" name="capacityChoice" value="30">30 ks</label>
+                <label><input type="radio" name="capacityChoice" value="40" checked>40 ks</label>
+                <label><input type="radio" name="capacityChoice" value="custom">iny pocet</label>
+              </fieldset>
+              <input class="hidden" id="capacityInput" name="capacity" type="number" min="1" step="1" inputmode="numeric" value="40" aria-label="Iny pocet cigariet">
               <button type="submit">Otvorit</button>
             </div>
           </form>

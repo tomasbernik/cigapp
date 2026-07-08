@@ -213,6 +213,7 @@ input[type="range"] {
 
 .number-row button,
 .tool-panel > button,
+.pack-options > button,
 .icon-button {
   min-height: 48px;
   border-radius: 8px;
@@ -235,6 +236,48 @@ input[type="range"] {
 
 .tool-panel {
   padding: 14px;
+}
+
+.open-pack-toggle {
+  width: 100%;
+}
+
+.pack-options {
+  display: grid;
+  gap: 10px;
+}
+
+.capacity-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.capacity-options legend {
+  grid-column: 1 / -1;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.capacity-options label {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.capacity-options input {
+  width: auto;
+  accent-color: var(--teal);
 }
 
 .tag-grid {
@@ -370,6 +413,10 @@ input[type="range"] {
   .tools-grid,
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .capacity-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
