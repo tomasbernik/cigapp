@@ -422,6 +422,22 @@ async function addEntry(remaining) {
 }
 
 async function openPack(capacity) {
+  const previousPack = activePack();
+  const previousLast = previousPack ? latestEntry(previousPack.id) : null;
+  const closedEntry =
+    previousPack && (!previousLast || previousLast.remaining > 0)
+      ? {
+          id: id("entry"),
+          packId: previousPack.id,
+          remaining: 0,
+          createdAt: new Date().toISOString(),
+        }
+      : null;
+
+  if (closedEntry) {
+    state.entries.push(closedEntry);
+  }
+
   state.packs = state.packs.map((pack) => ({ ...pack, active: false }));
   const pack = {
     id: id("pack"),
@@ -441,7 +457,8 @@ async function openPack(capacity) {
     const inactiveRows = state.packs.filter((item) => item.id !== pack.id).map(packToRow);
     const operations = [supabaseClient.from("packs").upsert(packToRow(pack))];
     if (inactiveRows.length) operations.push(supabaseClient.from("packs").upsert(inactiveRows));
-    operations.push(supabaseClient.from("entries").upsert(entryToRow(state.entries.at(-1))));
+    const newEntries = [closedEntry, state.entries.at(-1)].filter(Boolean).map(entryToRow);
+    operations.push(supabaseClient.from("entries").upsert(newEntries));
     const results = await Promise.all(operations);
     return { error: results.find((result) => result.error)?.error || null };
   });
