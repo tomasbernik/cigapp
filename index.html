@@ -18,7 +18,12 @@
         <div class="topbar-actions">
           <form class="auth-form" id="authForm">
             <input id="emailInput" name="email" type="email" inputmode="email" autocomplete="email" placeholder="email">
-            <button type="submit">Login</button>
+            <button type="submit">Poslat kod</button>
+          </form>
+          <form class="auth-form hidden" id="otpForm">
+            <input id="otpInput" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="kod z emailu" maxlength="8">
+            <button type="submit">Overit</button>
+            <button class="text-button" id="changeEmailButton" type="button">Zmenit email</button>
           </form>
           <button class="text-button hidden" id="signOutButton" type="button">Odhlasit</button>
           <button class="icon-button" id="exportCsvButton" type="button" title="Export CSV" aria-label="Export CSV">CSV</button>

@@ -28,11 +28,21 @@ All three tables use Supabase Auth user IDs and Row Level Security, so the publi
 
 ## 3. Enable an auth method
 
-For the first version, use email magic links:
+Use email OTP codes:
 
 1. Open **Authentication > Providers**.
 2. Enable **Email**.
-3. In **Authentication > URL Configuration**, add the app URL to allowed redirect URLs.
+3. Open **Authentication > Email Templates**.
+4. Edit the magic link template so the email clearly shows the OTP token.
+
+Minimal email body:
+
+```html
+<p>Tvoj CigLog kod je:</p>
+<h2>{{ .Token }}</h2>
+```
+
+5. In **Authentication > URL Configuration**, add the app URL to allowed redirect URLs.
 
 For local testing, add:
 

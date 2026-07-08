@@ -82,6 +82,11 @@ button {
   padding: 0 14px;
 }
 
+.auth-form .text-button {
+  background: #edf2f7;
+  color: var(--blue);
+}
+
 .sync-status {
   margin: -8px 0 14px;
   color: var(--muted);
