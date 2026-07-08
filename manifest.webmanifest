@@ -1,6 +1,6 @@
 {
-  "name": "CigLog",
-  "short_name": "CigLog",
+  "name": "CigApp",
+  "short_name": "CigApp",
   "description": "Jednoduche sledovanie stavu krabicky cigariet v case.",
   "start_url": ".",
   "display": "standalone",

@@ -1,4 +1,4 @@
--- CigLog Supabase schema
+-- CigApp Supabase schema
 -- Run this in Supabase Dashboard > SQL Editor.
 
 create table if not exists public.packs (

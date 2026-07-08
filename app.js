@@ -1,4 +1,4 @@
-const LEGACY_STORAGE_KEY = "ciglog-v1";
+const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
 const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";

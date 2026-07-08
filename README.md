@@ -1,4 +1,4 @@
-﻿# CigLog
+﻿# CigApp
 
 Mobilna webova appka na zapisovanie aktualneho stavu cigariet v otvorenej krabicke.
 
