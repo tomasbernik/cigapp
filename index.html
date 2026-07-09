@@ -123,6 +123,28 @@
           <div class="bars" id="timeBars"></div>
         </section>
 
+        <section class="calendar-panel">
+          <div class="section-head">
+            <h2>Kalendar</h2>
+            <div class="calendar-actions">
+              <button class="text-button" id="prevMonthButton" type="button" aria-label="Predchadzajuci mesiac">&lt;</button>
+              <strong id="calendarMonthLabel"></strong>
+              <button class="text-button" id="nextMonthButton" type="button" aria-label="Nasledujuci mesiac">&gt;</button>
+            </div>
+          </div>
+          <div class="calendar-weekdays" aria-hidden="true">
+            <span>Po</span>
+            <span>Ut</span>
+            <span>St</span>
+            <span>Stv</span>
+            <span>Pi</span>
+            <span>So</span>
+            <span>Ne</span>
+          </div>
+          <div class="calendar-grid" id="calendarGrid"></div>
+          <div class="day-detail" id="dayDetail"></div>
+        </section>
+
         <section class="history-panel">
           <div class="section-head">
             <h2>Zaznamy</h2>

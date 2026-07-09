@@ -15,6 +15,8 @@ const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
 let state = loadState();
 let currentUser = null;
 let remoteReady = false;
+let visibleCalendarDate = new Date();
+let selectedCalendarDay = dayKey();
 const supabaseClient =
   window.supabase?.createClient?.(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
@@ -47,6 +49,11 @@ const els = {
   dailyAverage: document.querySelector("#dailyAverage"),
   packsUsed: document.querySelector("#packsUsed"),
   timeBars: document.querySelector("#timeBars"),
+  calendarMonthLabel: document.querySelector("#calendarMonthLabel"),
+  calendarGrid: document.querySelector("#calendarGrid"),
+  dayDetail: document.querySelector("#dayDetail"),
+  prevMonthButton: document.querySelector("#prevMonthButton"),
+  nextMonthButton: document.querySelector("#nextMonthButton"),
   historyList: document.querySelector("#historyList"),
   exportCsvButton: document.querySelector("#exportCsvButton"),
   clearDataButton: document.querySelector("#clearDataButton"),
@@ -119,6 +126,27 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatLongDate(value) {
+  return new Intl.DateTimeFormat("sk-SK", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${value}T12:00:00`));
+}
+
+function monthLabel(date) {
+  return new Intl.DateTimeFormat("sk-SK", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+function shiftMonth(amount) {
+  visibleCalendarDate = new Date(visibleCalendarDate.getFullYear(), visibleCalendarDate.getMonth() + amount, 1);
+  renderCalendar();
+}
+
 function activePack() {
   return state.packs.find((pack) => pack.active) || null;
 }
@@ -169,6 +197,18 @@ function adjustmentEvents() {
 
 function allConsumptionEvents() {
   return [...state.entries.map(entryConsumptionEvent), ...adjustmentEvents()];
+}
+
+function eventsByDay() {
+  return allConsumptionEvents().reduce((days, event) => {
+    if (!days[event.date]) days[event.date] = [];
+    days[event.date].push(event);
+    return days;
+  }, {});
+}
+
+function dayTotal(events) {
+  return events.reduce((sum, event) => sum + event.amount, 0);
 }
 
 function blockFor(dateValue) {
@@ -263,6 +303,96 @@ function renderOverview() {
     .join("");
 }
 
+function renderCalendar() {
+  const year = visibleCalendarDate.getFullYear();
+  const month = visibleCalendarDate.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const leadingBlankDays = (firstDay.getDay() + 6) % 7;
+  const dayEvents = eventsByDay();
+  const today = dayKey();
+
+  els.calendarMonthLabel.textContent = monthLabel(visibleCalendarDate);
+
+  const cells = [];
+  for (let index = 0; index < leadingBlankDays; index += 1) {
+    cells.push('<div class="calendar-empty"></div>');
+  }
+
+  for (let day = 1; day <= lastDay.getDate(); day += 1) {
+    const date = dayKey(new Date(year, month, day));
+    const events = dayEvents[date] || [];
+    const total = dayTotal(events);
+    const classes = ["calendar-day"];
+    if (date === today) classes.push("is-today");
+    if (date === selectedCalendarDay) classes.push("is-selected");
+    if (total > 0) classes.push("has-smoking");
+    if (total < 0) classes.push("has-correction");
+
+    cells.push(`
+      <button class="${classes.join(" ")}" type="button" data-date="${date}" aria-pressed="${date === selectedCalendarDay}">
+        <span>${day}</span>
+        <strong>${total ? total : ""}</strong>
+      </button>
+    `);
+  }
+
+  els.calendarGrid.innerHTML = cells.join("");
+  els.calendarGrid.querySelectorAll("button[data-date]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedCalendarDay = button.dataset.date;
+      renderCalendar();
+    });
+  });
+  renderDayDetail();
+}
+
+function renderDayDetail() {
+  const events = (eventsByDay()[selectedCalendarDay] || []).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const total = dayTotal(events);
+  const day = state.days[selectedCalendarDay] || { tags: [], stress: 0, note: "" };
+  const context = [
+    day.tags?.length ? `Tagy: ${day.tags.join(", ")}` : "",
+    Number(day.stress) ? `Stres: ${day.stress}/5` : "",
+    day.note ? `Poznamka: ${day.note}` : "",
+  ].filter(Boolean);
+
+  const items = events.map((event) => {
+    if (event.type === "adjustment") {
+      const amount = Number(event.amount) || 0;
+      const sign = amount > 0 ? "+" : "";
+      const note = event.adjustment.note ? ` | ${event.adjustment.note}` : "";
+      return `<li><span>Manualna uprava${note}</span><strong>${sign}${amount}</strong></li>`;
+    }
+
+    const pack = state.packs.find((item) => item.id === event.entry.packId);
+    const assigned = event.date !== dayKey(new Date(event.entry.createdAt)) ? " | ranny stav" : "";
+    return `<li><span>${formatDateTime(event.entry.createdAt)} | zostava ${event.entry.remaining} z ${pack?.capacity || "?"}${assigned}</span><strong>-${event.amount}</strong></li>`;
+  });
+
+  els.dayDetail.innerHTML = `
+    <div class="day-detail-head">
+      <div>
+        <span>${formatLongDate(selectedCalendarDay)}</span>
+        <strong>${total} vyfajcenych</strong>
+      </div>
+      <button class="text-button" id="todayCalendarButton" type="button">Dnes</button>
+    </div>
+    ${context.length ? `<p class="day-context">${context.join(" | ")}</p>` : ""}
+    ${
+      items.length
+        ? `<ul class="day-event-list">${items.join("")}</ul>`
+        : '<p class="empty">V tento den este nie su ziadne zaznamy.</p>'
+    }
+  `;
+
+  document.querySelector("#todayCalendarButton").addEventListener("click", () => {
+    visibleCalendarDate = new Date();
+    selectedCalendarDay = dayKey();
+    renderCalendar();
+  });
+}
+
 function renderHistory() {
   const entryItems = state.entries.map((entry) => ({ type: "entry", entry, createdAt: entry.createdAt }));
   const adjustmentItems = (state.adjustments || []).map((adjustment) => ({
@@ -302,6 +432,7 @@ function render() {
   renderAuth();
   renderStatus();
   renderOverview();
+  renderCalendar();
   renderHistory();
 }
 
@@ -691,6 +822,8 @@ els.contextForm.addEventListener("submit", (event) => {
 });
 
 els.periodSelect.addEventListener("change", renderOverview);
+els.prevMonthButton.addEventListener("click", () => shiftMonth(-1));
+els.nextMonthButton.addEventListener("click", () => shiftMonth(1));
 els.exportCsvButton.addEventListener("click", exportCsv);
 els.clearDataButton.addEventListener("click", async () => {
   if (!confirm("Vymazat vsetky data?")) return;
