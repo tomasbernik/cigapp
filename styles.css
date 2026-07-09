@@ -481,6 +481,27 @@ input[type="range"] {
   margin: 10px 0 0;
 }
 
+.day-opening-state {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 10px 12px;
+}
+
+.day-opening-state span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.day-opening-state strong {
+  color: var(--blue);
+}
+
 .day-event-list {
   display: grid;
   gap: 8px;
@@ -500,6 +521,22 @@ input[type="range"] {
 .day-event-list span {
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+.day-event-list .positive {
+  color: var(--teal);
+}
+
+.day-event-list .negative {
+  color: #b42318;
+}
+
+.day-calculation {
+  margin: 12px 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--blue);
+  font-weight: 800;
 }
 
 .history-list {

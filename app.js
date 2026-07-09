@@ -160,14 +160,18 @@ function consumptionDay(entry) {
 }
 
 function entryConsumption(entry) {
+  const previous = previousEntry(entry);
+  if (!previous) return 0;
+
+  return Math.max(0, previous.remaining - entry.remaining);
+}
+
+function previousEntry(entry) {
   const packEntries = state.entries
     .filter((item) => item.packId === entry.packId)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   const index = packEntries.findIndex((item) => item.id === entry.id);
-  if (index < 1) return 0;
-
-  const previous = packEntries[index - 1];
-  return Math.max(0, previous.remaining - entry.remaining);
+  return index > 0 ? packEntries[index - 1] : null;
 }
 
 function entryConsumptionEvent(entry) {
@@ -209,6 +213,55 @@ function eventsByDay() {
 
 function dayTotal(events) {
   return events.reduce((sum, event) => sum + event.amount, 0);
+}
+
+function signedAmount(value) {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function selectedDayStart() {
+  return new Date(`${selectedCalendarDay}T00:00:00`);
+}
+
+function selectedDayEnd() {
+  return new Date(`${selectedCalendarDay}T23:59:59.999`);
+}
+
+function dayOpeningState(events) {
+  const firstSmokingEvent = events.find((event) => event.type === "entry" && event.amount > 0);
+  if (firstSmokingEvent) {
+    const previous = previousEntry(firstSmokingEvent.entry);
+    const pack = state.packs.find((item) => item.id === firstSmokingEvent.entry.packId);
+    if (previous) {
+      return {
+        remaining: previous.remaining,
+        capacity: pack?.capacity || "?",
+        label: "Pred prvym zapocitanym fajcenim",
+      };
+    }
+  }
+
+  const start = selectedDayStart();
+  const end = selectedDayEnd();
+  const latestBeforeDay = state.entries
+    .filter((entry) => new Date(entry.createdAt) < start)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  const firstStateInDay = state.entries
+    .filter((entry) => {
+      const createdAt = new Date(entry.createdAt);
+      return createdAt >= start && createdAt <= end;
+    })
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
+  const entry = latestBeforeDay || firstStateInDay;
+  const pack = entry ? state.packs.find((item) => item.id === entry.packId) : null;
+
+  if (!entry) return null;
+
+  return {
+    remaining: entry.remaining,
+    capacity: pack?.capacity || "?",
+    label: latestBeforeDay ? "Stav na zaciatku dna" : "Prvy ulozeny stav v tento den",
+  };
 }
 
 function blockFor(dateValue) {
@@ -349,25 +402,28 @@ function renderCalendar() {
 
 function renderDayDetail() {
   const events = (eventsByDay()[selectedCalendarDay] || []).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  const total = dayTotal(events);
+  const countedEvents = events.filter((event) => event.amount !== 0);
+  const total = dayTotal(countedEvents);
   const day = state.days[selectedCalendarDay] || { tags: [], stress: 0, note: "" };
+  const openingState = dayOpeningState(events);
+  const formulaParts = countedEvents.map((event) => signedAmount(event.amount));
   const context = [
     day.tags?.length ? `Tagy: ${day.tags.join(", ")}` : "",
     Number(day.stress) ? `Stres: ${day.stress}/5` : "",
     day.note ? `Poznamka: ${day.note}` : "",
   ].filter(Boolean);
 
-  const items = events.map((event) => {
+  const items = countedEvents.map((event) => {
     if (event.type === "adjustment") {
       const amount = Number(event.amount) || 0;
-      const sign = amount > 0 ? "+" : "";
       const note = event.adjustment.note ? ` | ${event.adjustment.note}` : "";
-      return `<li><span>Manualna uprava${note}</span><strong>${sign}${amount}</strong></li>`;
+      const amountClass = amount < 0 ? "negative" : "positive";
+      return `<li><span>Manualna uprava${note}</span><strong class="${amountClass}">${signedAmount(amount)}</strong></li>`;
     }
 
     const pack = state.packs.find((item) => item.id === event.entry.packId);
     const assigned = event.date !== dayKey(new Date(event.entry.createdAt)) ? " | ranny stav" : "";
-    return `<li><span>${formatDateTime(event.entry.createdAt)} | zostava ${event.entry.remaining} z ${pack?.capacity || "?"}${assigned}</span><strong>-${event.amount}</strong></li>`;
+    return `<li><span>${formatDateTime(event.entry.createdAt)} | vyfajcene od posledneho stavu | zostava ${event.entry.remaining} z ${pack?.capacity || "?"}${assigned}</span><strong class="positive">+${event.amount}</strong></li>`;
   });
 
   els.dayDetail.innerHTML = `
@@ -378,10 +434,15 @@ function renderDayDetail() {
       </div>
       <button class="text-button" id="todayCalendarButton" type="button">Dnes</button>
     </div>
+    ${
+      openingState
+        ? `<div class="day-opening-state"><span>${openingState.label}</span><strong>${openingState.remaining} z ${openingState.capacity}</strong></div>`
+        : ""
+    }
     ${context.length ? `<p class="day-context">${context.join(" | ")}</p>` : ""}
     ${
       items.length
-        ? `<ul class="day-event-list">${items.join("")}</ul>`
+        ? `<ul class="day-event-list">${items.join("")}</ul><p class="day-calculation">Vypocet: ${formulaParts.join(" ")} = ${total}</p>`
         : '<p class="empty">V tento den este nie su ziadne zaznamy.</p>'
     }
   `;
