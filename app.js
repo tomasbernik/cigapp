@@ -11,7 +11,7 @@ const blocks = [
   { id: "noc", label: "Noc", from: 22, to: 29 },
 ];
 
-const initialState = { packs: [], entries: [], days: {} };
+const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
 let state = loadState();
 let currentUser = null;
 let remoteReady = false;
@@ -27,12 +27,17 @@ const els = {
   packPercent: document.querySelector("#packPercent"),
   stateForm: document.querySelector("#stateForm"),
   remainingInput: document.querySelector("#remainingInput"),
+  morningStateInput: document.querySelector("#morningStateInput"),
   saveHint: document.querySelector("#saveHint"),
   packForm: document.querySelector("#packForm"),
   openPackToggle: document.querySelector("#openPackToggle"),
   packOptions: document.querySelector("#packOptions"),
   capacityInput: document.querySelector("#capacityInput"),
   capacityChoices: [...document.querySelectorAll('input[name="capacityChoice"]')],
+  adjustmentForm: document.querySelector("#adjustmentForm"),
+  adjustmentDateInput: document.querySelector("#adjustmentDateInput"),
+  adjustmentAmountInput: document.querySelector("#adjustmentAmountInput"),
+  adjustmentNoteInput: document.querySelector("#adjustmentNoteInput"),
   tagGrid: document.querySelector("#tagGrid"),
   contextForm: document.querySelector("#contextForm"),
   stressInput: document.querySelector("#stressInput"),
@@ -55,7 +60,8 @@ const els = {
 function loadState() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
-    return { ...initialState, ...JSON.parse(stored) };
+    const parsed = JSON.parse(stored);
+    return { ...initialState, ...parsed, adjustments: parsed?.adjustments || [] };
   } catch {
     return { ...initialState };
   }
@@ -91,7 +97,17 @@ function id(prefix) {
 }
 
 function dayKey(date = new Date()) {
-  return date.toISOString().slice(0, 10);
+  const localDate = new Date(date);
+  const year = localDate.getFullYear();
+  const month = String(localDate.getMonth() + 1).padStart(2, "0");
+  const day = String(localDate.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function previousDayKey(date = new Date()) {
+  const previous = new Date(date);
+  previous.setDate(previous.getDate() - 1);
+  return dayKey(previous);
 }
 
 function formatDateTime(value) {
@@ -111,6 +127,10 @@ function latestEntry(packId = activePack()?.id) {
   return [...state.entries].reverse().find((entry) => entry.packId === packId) || null;
 }
 
+function consumptionDay(entry) {
+  return entry.consumptionDate || dayKey(new Date(entry.createdAt));
+}
+
 function entryConsumption(entry) {
   const packEntries = state.entries
     .filter((item) => item.packId === entry.packId)
@@ -122,6 +142,35 @@ function entryConsumption(entry) {
   return Math.max(0, previous.remaining - entry.remaining);
 }
 
+function entryConsumptionEvent(entry) {
+  const amount = entryConsumption(entry);
+  return {
+    type: "entry",
+    id: entry.id,
+    amount,
+    date: consumptionDay(entry),
+    createdAt: entry.createdAt,
+    blockAt: entry.createdAt,
+    entry,
+  };
+}
+
+function adjustmentEvents() {
+  return (state.adjustments || []).map((adjustment) => ({
+    type: "adjustment",
+    id: adjustment.id,
+    amount: Number(adjustment.amount) || 0,
+    date: adjustment.date,
+    createdAt: adjustment.createdAt,
+    blockAt: adjustment.createdAt,
+    adjustment,
+  }));
+}
+
+function allConsumptionEvents() {
+  return [...state.entries.map(entryConsumptionEvent), ...adjustmentEvents()];
+}
+
 function blockFor(dateValue) {
   const date = new Date(dateValue);
   const hour = date.getHours();
@@ -129,20 +178,27 @@ function blockFor(dateValue) {
   return blocks.find((block) => normalized >= block.from && normalized < block.to) || blocks[0];
 }
 
-function getEntriesForPeriod(period) {
+function getEventsForPeriod(period) {
   const now = new Date();
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
 
+  let startKey = dayKey(start);
   if (period === "7" || period === "30") {
     start.setDate(start.getDate() - Number(period) + 1);
+    startKey = dayKey(start);
   } else if (period === "month") {
     start.setDate(1);
+    startKey = dayKey(start);
   } else if (period === "all") {
-    return state.entries;
+    return allConsumptionEvents();
   }
 
-  return state.entries.filter((entry) => new Date(entry.createdAt) >= start);
+  if (period === "today") {
+    return allConsumptionEvents().filter((event) => event.date === startKey);
+  }
+
+  return allConsumptionEvents().filter((event) => event.date >= startKey);
 }
 
 function renderTags() {
@@ -153,6 +209,7 @@ function renderTags() {
 
 function renderCurrentDay() {
   const day = state.days[dayKey()] || { tags: [], stress: 0, note: "" };
+  els.adjustmentDateInput.value = dayKey();
   els.stressInput.value = day.stress || 0;
   els.noteInput.value = day.note || "";
   els.tagGrid.querySelectorAll("input").forEach((input) => {
@@ -183,30 +240,37 @@ function renderStatus() {
 }
 
 function renderOverview() {
-  const entries = getEntriesForPeriod(els.periodSelect.value);
-  const total = entries.reduce((sum, entry) => sum + entryConsumption(entry), 0);
-  const days = new Set(entries.map((entry) => dayKey(new Date(entry.createdAt))));
-  const packs = new Set(entries.map((entry) => entry.packId));
+  const events = getEventsForPeriod(els.periodSelect.value);
+  const countedEvents = events.filter((event) => event.amount !== 0);
+  const total = countedEvents.reduce((sum, event) => sum + event.amount, 0);
+  const days = new Set(countedEvents.map((event) => event.date));
+  const packs = new Set(events.filter((event) => event.entry).map((event) => event.entry.packId));
   const byBlock = Object.fromEntries(blocks.map((block) => [block.id, 0]));
 
-  entries.forEach((entry) => {
-    byBlock[blockFor(entry.createdAt).id] += entryConsumption(entry);
+  countedEvents.forEach((event) => {
+    byBlock[blockFor(event.blockAt).id] += event.amount;
   });
 
-  const maxBlock = Math.max(1, ...Object.values(byBlock));
+  const maxBlock = Math.max(1, ...Object.values(byBlock).map((value) => Math.abs(value)));
   els.totalSmoked.textContent = String(total);
   els.dailyAverage.textContent = days.size ? (total / days.size).toFixed(1) : "0";
   els.packsUsed.textContent = String(packs.size);
   els.timeBars.innerHTML = blocks
     .map((block) => {
       const value = byBlock[block.id];
-      return `<div class="bar-row"><span>${block.label}</span><div class="bar-track"><div class="bar-fill" style="width:${(value / maxBlock) * 100}%"></div></div><strong>${value}</strong></div>`;
+      return `<div class="bar-row"><span>${block.label}</span><div class="bar-track"><div class="bar-fill" style="width:${(Math.abs(value) / maxBlock) * 100}%"></div></div><strong>${value}</strong></div>`;
     })
     .join("");
 }
 
 function renderHistory() {
-  const items = [...state.entries]
+  const entryItems = state.entries.map((entry) => ({ type: "entry", entry, createdAt: entry.createdAt }));
+  const adjustmentItems = (state.adjustments || []).map((adjustment) => ({
+    type: "adjustment",
+    adjustment,
+    createdAt: adjustment.createdAt,
+  }));
+  const items = [...entryItems, ...adjustmentItems]
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 30);
 
@@ -216,10 +280,20 @@ function renderHistory() {
   }
 
   els.historyList.innerHTML = items
-    .map((entry) => {
+    .map((item) => {
+      if (item.type === "adjustment") {
+        const adjustment = item.adjustment;
+        const amount = Number(adjustment.amount) || 0;
+        const sign = amount > 0 ? "+" : "";
+        const note = adjustment.note ? ` | ${adjustment.note}` : "";
+        return `<article class="history-item"><div><strong>Manualna uprava ${sign}${amount}</strong><span>${adjustment.date}${note}</span></div><strong>${sign}${amount}</strong></article>`;
+      }
+
+      const entry = item.entry;
       const pack = state.packs.find((item) => item.id === entry.packId);
       const smoked = entryConsumption(entry);
-      return `<article class="history-item"><div><strong>${entry.remaining} zostava</strong><span>${formatDateTime(entry.createdAt)} | krabicka ${pack?.capacity || "?"}</span></div><strong>-${smoked}</strong></article>`;
+      const assigned = consumptionDay(entry) !== dayKey(new Date(entry.createdAt)) ? ` | zapocitane ${consumptionDay(entry)}` : "";
+      return `<article class="history-item"><div><strong>${entry.remaining} zostava</strong><span>${formatDateTime(entry.createdAt)} | krabicka ${pack?.capacity || "?"}${assigned}</span></div><strong>-${smoked}</strong></article>`;
     })
     .join("");
 }
@@ -267,6 +341,18 @@ function entryToRow(entry) {
     pack_id: entry.packId,
     remaining: entry.remaining,
     created_at: entry.createdAt,
+    consumption_date: consumptionDay(entry),
+  };
+}
+
+function adjustmentToRow(adjustment) {
+  return {
+    id: adjustment.id,
+    user_id: currentUser.id,
+    day: adjustment.date,
+    amount: adjustment.amount,
+    note: adjustment.note || "",
+    created_at: adjustment.createdAt,
   };
 }
 
@@ -296,6 +382,17 @@ function rowToEntry(row) {
     packId: row.pack_id,
     remaining: row.remaining,
     createdAt: row.created_at,
+    consumptionDate: row.consumption_date || dayKey(new Date(row.created_at)),
+  };
+}
+
+function rowToAdjustment(row) {
+  return {
+    id: row.id,
+    date: row.day,
+    amount: row.amount,
+    note: row.note || "",
+    createdAt: row.created_at,
   };
 }
 
@@ -318,22 +415,27 @@ async function loadRemoteState() {
   remoteReady = false;
   renderAuth();
 
-  const [{ data: packs, error: packsError }, { data: entries, error: entriesError }, { data: days, error: daysError }] =
-    await Promise.all([
-      supabaseClient.from("packs").select("*").order("opened_at", { ascending: true }),
-      supabaseClient.from("entries").select("*").order("created_at", { ascending: true }),
-      supabaseClient.from("days").select("*").order("day", { ascending: true }),
-    ]);
+  const [
+    { data: packs, error: packsError },
+    { data: entries, error: entriesError },
+    { data: days, error: daysError },
+    { data: adjustments, error: adjustmentsError },
+  ] = await Promise.all([
+    supabaseClient.from("packs").select("*").order("opened_at", { ascending: true }),
+    supabaseClient.from("entries").select("*").order("created_at", { ascending: true }),
+    supabaseClient.from("days").select("*").order("day", { ascending: true }),
+    supabaseClient.from("adjustments").select("*").order("created_at", { ascending: true }),
+  ]);
 
-  const error = packsError || entriesError || daysError;
+  const error = packsError || entriesError || daysError || adjustmentsError;
   if (error) {
     setSyncStatus(`Supabase chyba: ${error.message}`);
     remoteReady = false;
     return;
   }
 
-  const localHasData = state.packs.length || state.entries.length || Object.keys(state.days).length;
-  const remoteHasData = packs.length || entries.length || days.length;
+  const localHasData = state.packs.length || state.entries.length || Object.keys(state.days).length || state.adjustments.length;
+  const remoteHasData = packs.length || entries.length || days.length || adjustments.length;
 
   if (!remoteHasData && localHasData) {
     remoteReady = true;
@@ -344,6 +446,7 @@ async function loadRemoteState() {
       packs: packs.map(rowToPack),
       entries: entries.map(rowToEntry),
       days: rowsToDays(days),
+      adjustments: adjustments.map(rowToAdjustment),
     };
     saveState();
     remoteReady = true;
@@ -372,11 +475,13 @@ async function uploadFullState() {
   const packRows = state.packs.map(packToRow);
   const entryRows = state.entries.map(entryToRow);
   const dayRows = Object.entries(state.days).map(([key, day]) => dayToRow(key, day));
+  const adjustmentRows = state.adjustments.map(adjustmentToRow);
 
   const operations = [];
   if (packRows.length) operations.push(supabaseClient.from("packs").upsert(packRows));
   if (entryRows.length) operations.push(supabaseClient.from("entries").upsert(entryRows));
   if (dayRows.length) operations.push(supabaseClient.from("days").upsert(dayRows));
+  if (adjustmentRows.length) operations.push(supabaseClient.from("adjustments").upsert(adjustmentRows));
 
   const results = await Promise.all(operations);
   const error = results.find((result) => result.error)?.error;
@@ -389,7 +494,7 @@ async function uploadFullState() {
   return true;
 }
 
-async function addEntry(remaining) {
+async function addEntry(remaining, options = {}) {
   const pack = activePack();
   if (!pack) {
     els.saveHint.textContent = "Najprv otvor novu krabicku.";
@@ -407,17 +512,19 @@ async function addEntry(remaining) {
     return;
   }
 
+  const now = new Date();
   const entry = {
     id: id("entry"),
     packId: pack.id,
     remaining,
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
+    consumptionDate: options.assignToPreviousDay ? previousDayKey(now) : dayKey(now),
   };
   state.entries.push(entry);
   saveState();
   await syncRemote(() => supabaseClient.from("entries").upsert(entryToRow(entry)));
   els.stateForm.reset();
-  els.saveHint.textContent = "Stav ulozeny.";
+  els.saveHint.textContent = options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny.";
   render();
 }
 
@@ -491,12 +598,28 @@ async function saveDayContext() {
   await syncRemote(() => supabaseClient.from("days").upsert(dayToRow(dayKey(), state.days[dayKey()])));
 }
 
+async function addAdjustment(date, amount, note) {
+  const adjustment = {
+    id: id("adjustment"),
+    date,
+    amount,
+    note,
+    createdAt: new Date().toISOString(),
+  };
+  state.adjustments.push(adjustment);
+  saveState();
+  await syncRemote(() => supabaseClient.from("adjustments").upsert(adjustmentToRow(adjustment)));
+  els.adjustmentAmountInput.value = "";
+  els.adjustmentNoteInput.value = "";
+  render();
+}
+
 function exportCsv() {
   const rows = [
-    ["type", "date", "pack_id", "capacity", "remaining", "smoked_since_previous", "tags", "stress", "note"],
+    ["type", "date", "pack_id", "capacity", "remaining", "smoked_since_previous", "consumption_date", "tags", "stress", "note"],
     ...state.entries.map((entry) => {
       const pack = state.packs.find((item) => item.id === entry.packId);
-      const day = state.days[dayKey(new Date(entry.createdAt))] || {};
+      const day = state.days[consumptionDay(entry)] || {};
       return [
         "entry",
         entry.createdAt,
@@ -504,9 +627,25 @@ function exportCsv() {
         pack?.capacity || "",
         entry.remaining,
         entryConsumption(entry),
+        consumptionDay(entry),
         (day.tags || []).join(";"),
         day.stress ?? "",
         day.note || "",
+      ];
+    }),
+    ...(state.adjustments || []).map((adjustment) => {
+      const day = state.days[adjustment.date] || {};
+      return [
+        "adjustment",
+        adjustment.createdAt,
+        "",
+        "",
+        "",
+        adjustment.amount,
+        adjustment.date,
+        (day.tags || []).join(";"),
+        day.stress ?? "",
+        adjustment.note || day.note || "",
       ];
     }),
   ];
@@ -524,7 +663,7 @@ function exportCsv() {
 
 els.stateForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  addEntry(Number(els.remainingInput.value));
+  addEntry(Number(els.remainingInput.value), { assignToPreviousDay: els.morningStateInput.checked });
 });
 
 els.packForm.addEventListener("submit", (event) => {
@@ -540,6 +679,11 @@ els.capacityChoices.forEach((input) => {
   input.addEventListener("change", renderPackOptions);
 });
 
+els.adjustmentForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addAdjustment(els.adjustmentDateInput.value, Number(els.adjustmentAmountInput.value), els.adjustmentNoteInput.value.trim());
+});
+
 els.contextForm.addEventListener("submit", (event) => {
   event.preventDefault();
   saveDayContext();
@@ -550,15 +694,16 @@ els.periodSelect.addEventListener("change", renderOverview);
 els.exportCsvButton.addEventListener("click", exportCsv);
 els.clearDataButton.addEventListener("click", async () => {
   if (!confirm("Vymazat vsetky data?")) return;
-  state = { packs: [], entries: [], days: {} };
+  state = { packs: [], entries: [], days: {}, adjustments: [] };
   saveState();
   if (remoteEnabled()) {
-    const [{ error: entriesError }, { error: daysError }, { error: packsError }] = await Promise.all([
+    const [{ error: adjustmentsError }, { error: entriesError }, { error: daysError }, { error: packsError }] = await Promise.all([
+      supabaseClient.from("adjustments").delete().eq("user_id", currentUser.id),
       supabaseClient.from("entries").delete().eq("user_id", currentUser.id),
       supabaseClient.from("days").delete().eq("user_id", currentUser.id),
       supabaseClient.from("packs").delete().eq("user_id", currentUser.id),
     ]);
-    const error = entriesError || daysError || packsError;
+    const error = adjustmentsError || entriesError || daysError || packsError;
     if (error) setSyncStatus(`Supabase chyba: ${error.message}`);
   }
   renderCurrentDay();

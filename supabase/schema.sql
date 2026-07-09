@@ -15,8 +15,19 @@ create table if not exists public.entries (
   user_id uuid not null references auth.users(id) on delete cascade,
   pack_id text not null references public.packs(id) on delete cascade,
   remaining integer not null check (remaining >= 0),
-  created_at timestamptz not null
+  created_at timestamptz not null,
+  consumption_date date
 );
+
+alter table public.entries
+  add column if not exists consumption_date date;
+
+update public.entries
+  set consumption_date = created_at::date
+  where consumption_date is null;
+
+alter table public.entries
+  alter column consumption_date set not null;
 
 create table if not exists public.days (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -28,18 +39,34 @@ create table if not exists public.days (
   primary key (user_id, day)
 );
 
+create table if not exists public.adjustments (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  day date not null,
+  amount integer not null,
+  note text not null default '',
+  created_at timestamptz not null default now()
+);
+
 create index if not exists packs_user_id_opened_at_idx
   on public.packs (user_id, opened_at desc);
 
 create index if not exists entries_user_id_created_at_idx
   on public.entries (user_id, created_at desc);
 
+create index if not exists entries_user_id_consumption_date_idx
+  on public.entries (user_id, consumption_date desc);
+
 create index if not exists entries_pack_id_created_at_idx
   on public.entries (pack_id, created_at);
+
+create index if not exists adjustments_user_id_day_idx
+  on public.adjustments (user_id, day desc);
 
 alter table public.packs enable row level security;
 alter table public.entries enable row level security;
 alter table public.days enable row level security;
+alter table public.adjustments enable row level security;
 
 drop policy if exists "Users can read own packs" on public.packs;
 create policy "Users can read own packs"
@@ -116,4 +143,25 @@ create policy "Users can update own days"
 drop policy if exists "Users can delete own days" on public.days;
 create policy "Users can delete own days"
   on public.days for delete
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can read own adjustments" on public.adjustments;
+create policy "Users can read own adjustments"
+  on public.adjustments for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can insert own adjustments" on public.adjustments;
+create policy "Users can insert own adjustments"
+  on public.adjustments for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update own adjustments" on public.adjustments;
+create policy "Users can update own adjustments"
+  on public.adjustments for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can delete own adjustments" on public.adjustments;
+create policy "Users can delete own adjustments"
+  on public.adjustments for delete
   using (auth.uid() = user_id);
