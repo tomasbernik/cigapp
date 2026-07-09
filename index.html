@@ -37,6 +37,10 @@
               <input id="remainingInput" name="remaining" type="number" min="0" step="1" inputmode="numeric" placeholder="napr. 14" required>
               <button type="submit">Ulozit stav</button>
             </div>
+            <label class="check-row">
+              <input id="morningStateInput" name="morningState" type="checkbox">
+              <span>Ranny stav - rozdiel od posledneho stavu patri do vcera</span>
+            </label>
             <p class="hint" id="saveHint">Cas sa ulozi automaticky.</p>
           </form>
         </section>
@@ -49,6 +53,18 @@
               <input id="capacityInput" name="capacity" type="number" min="1" step="1" inputmode="numeric" value="20" required>
               <button type="submit">Otvorit</button>
             </div>
+          </form>
+
+          <form class="tool-panel" id="adjustmentForm">
+            <h2>Manualna uprava</h2>
+            <label for="adjustmentDateInput">Den</label>
+            <input id="adjustmentDateInput" name="date" type="date" required>
+            <label for="adjustmentAmountInput">Zmena poctu vyfajcenych</label>
+            <div class="number-row">
+              <input id="adjustmentAmountInput" name="amount" type="number" step="1" inputmode="numeric" placeholder="napr. 2 alebo -1" required>
+              <button type="submit">Upravit</button>
+            </div>
+            <input id="adjustmentNoteInput" name="note" type="text" placeholder="Poznamka">
           </form>
 
           <form class="tool-panel" id="contextForm">

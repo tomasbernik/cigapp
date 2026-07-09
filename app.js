@@ -8,7 +8,7 @@ const blocks = [
   { id: "noc", label: "Noc", from: 22, to: 29 },
 ];
 
-const initialState = { packs: [], entries: [], days: {} };
+const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
 let state = loadState();
 
 const els = {
@@ -18,9 +18,14 @@ const els = {
   packPercent: document.querySelector("#packPercent"),
   stateForm: document.querySelector("#stateForm"),
   remainingInput: document.querySelector("#remainingInput"),
+  morningStateInput: document.querySelector("#morningStateInput"),
   saveHint: document.querySelector("#saveHint"),
   packForm: document.querySelector("#packForm"),
   capacityInput: document.querySelector("#capacityInput"),
+  adjustmentForm: document.querySelector("#adjustmentForm"),
+  adjustmentDateInput: document.querySelector("#adjustmentDateInput"),
+  adjustmentAmountInput: document.querySelector("#adjustmentAmountInput"),
+  adjustmentNoteInput: document.querySelector("#adjustmentNoteInput"),
   tagGrid: document.querySelector("#tagGrid"),
   contextForm: document.querySelector("#contextForm"),
   stressInput: document.querySelector("#stressInput"),
@@ -37,7 +42,8 @@ const els = {
 
 function loadState() {
   try {
-    return { ...initialState, ...JSON.parse(localStorage.getItem(STORAGE_KEY)) };
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return { ...initialState, ...stored, adjustments: stored?.adjustments || [] };
   } catch {
     return { ...initialState };
   }
@@ -52,7 +58,17 @@ function id(prefix) {
 }
 
 function dayKey(date = new Date()) {
-  return date.toISOString().slice(0, 10);
+  const localDate = new Date(date);
+  const year = localDate.getFullYear();
+  const month = String(localDate.getMonth() + 1).padStart(2, "0");
+  const day = String(localDate.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function previousDayKey(date = new Date()) {
+  const previous = new Date(date);
+  previous.setDate(previous.getDate() - 1);
+  return dayKey(previous);
 }
 
 function formatDateTime(value) {
@@ -72,6 +88,10 @@ function latestEntry(packId = activePack()?.id) {
   return [...state.entries].reverse().find((entry) => entry.packId === packId) || null;
 }
 
+function consumptionDay(entry) {
+  return entry.consumptionDate || dayKey(new Date(entry.createdAt));
+}
+
 function entryConsumption(entry) {
   const packEntries = state.entries
     .filter((item) => item.packId === entry.packId)
@@ -83,6 +103,35 @@ function entryConsumption(entry) {
   return Math.max(0, previous.remaining - entry.remaining);
 }
 
+function entryConsumptionEvent(entry) {
+  const amount = entryConsumption(entry);
+  return {
+    type: "entry",
+    id: entry.id,
+    amount,
+    date: consumptionDay(entry),
+    createdAt: entry.createdAt,
+    blockAt: entry.createdAt,
+    entry,
+  };
+}
+
+function adjustmentEvents() {
+  return (state.adjustments || []).map((adjustment) => ({
+    type: "adjustment",
+    id: adjustment.id,
+    amount: Number(adjustment.amount) || 0,
+    date: adjustment.date,
+    createdAt: adjustment.createdAt,
+    blockAt: adjustment.createdAt,
+    adjustment,
+  }));
+}
+
+function allConsumptionEvents() {
+  return [...state.entries.map(entryConsumptionEvent), ...adjustmentEvents()];
+}
+
 function blockFor(dateValue) {
   const date = new Date(dateValue);
   const hour = date.getHours();
@@ -90,20 +139,27 @@ function blockFor(dateValue) {
   return blocks.find((block) => normalized >= block.from && normalized < block.to) || blocks[0];
 }
 
-function getEntriesForPeriod(period) {
+function getEventsForPeriod(period) {
   const now = new Date();
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
 
+  let startKey = dayKey(start);
   if (period === "7" || period === "30") {
     start.setDate(start.getDate() - Number(period) + 1);
+    startKey = dayKey(start);
   } else if (period === "month") {
     start.setDate(1);
+    startKey = dayKey(start);
   } else if (period === "all") {
-    return state.entries;
+    return allConsumptionEvents();
   }
 
-  return state.entries.filter((entry) => new Date(entry.createdAt) >= start);
+  if (period === "today") {
+    return allConsumptionEvents().filter((event) => event.date === startKey);
+  }
+
+  return allConsumptionEvents().filter((event) => event.date >= startKey);
 }
 
 function renderTags() {
@@ -114,6 +170,7 @@ function renderTags() {
 
 function renderCurrentDay() {
   const day = state.days[dayKey()] || { tags: [], stress: 0, note: "" };
+  els.adjustmentDateInput.value = dayKey();
   els.stressInput.value = day.stress || 0;
   els.noteInput.value = day.note || "";
   els.tagGrid.querySelectorAll("input").forEach((input) => {
@@ -144,30 +201,37 @@ function renderStatus() {
 }
 
 function renderOverview() {
-  const entries = getEntriesForPeriod(els.periodSelect.value);
-  const total = entries.reduce((sum, entry) => sum + entryConsumption(entry), 0);
-  const days = new Set(entries.map((entry) => dayKey(new Date(entry.createdAt))));
-  const packs = new Set(entries.map((entry) => entry.packId));
+  const events = getEventsForPeriod(els.periodSelect.value);
+  const countedEvents = events.filter((event) => event.amount !== 0);
+  const total = countedEvents.reduce((sum, event) => sum + event.amount, 0);
+  const days = new Set(countedEvents.map((event) => event.date));
+  const packs = new Set(events.filter((event) => event.entry).map((event) => event.entry.packId));
   const byBlock = Object.fromEntries(blocks.map((block) => [block.id, 0]));
 
-  entries.forEach((entry) => {
-    byBlock[blockFor(entry.createdAt).id] += entryConsumption(entry);
+  countedEvents.forEach((event) => {
+    byBlock[blockFor(event.blockAt).id] += event.amount;
   });
 
-  const maxBlock = Math.max(1, ...Object.values(byBlock));
+  const maxBlock = Math.max(1, ...Object.values(byBlock).map((value) => Math.abs(value)));
   els.totalSmoked.textContent = String(total);
   els.dailyAverage.textContent = days.size ? (total / days.size).toFixed(1) : "0";
   els.packsUsed.textContent = String(packs.size);
   els.timeBars.innerHTML = blocks
     .map((block) => {
       const value = byBlock[block.id];
-      return `<div class="bar-row"><span>${block.label}</span><div class="bar-track"><div class="bar-fill" style="width:${(value / maxBlock) * 100}%"></div></div><strong>${value}</strong></div>`;
+      return `<div class="bar-row"><span>${block.label}</span><div class="bar-track"><div class="bar-fill" style="width:${(Math.abs(value) / maxBlock) * 100}%"></div></div><strong>${value}</strong></div>`;
     })
     .join("");
 }
 
 function renderHistory() {
-  const items = [...state.entries]
+  const entryItems = state.entries.map((entry) => ({ type: "entry", entry, createdAt: entry.createdAt }));
+  const adjustmentItems = (state.adjustments || []).map((adjustment) => ({
+    type: "adjustment",
+    adjustment,
+    createdAt: adjustment.createdAt,
+  }));
+  const items = [...entryItems, ...adjustmentItems]
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 30);
 
@@ -177,10 +241,20 @@ function renderHistory() {
   }
 
   els.historyList.innerHTML = items
-    .map((entry) => {
+    .map((item) => {
+      if (item.type === "adjustment") {
+        const adjustment = item.adjustment;
+        const amount = Number(adjustment.amount) || 0;
+        const sign = amount > 0 ? "+" : "";
+        const note = adjustment.note ? ` | ${adjustment.note}` : "";
+        return `<article class="history-item"><div><strong>Manualna uprava ${sign}${amount}</strong><span>${adjustment.date}${note}</span></div><strong>${sign}${amount}</strong></article>`;
+      }
+
+      const entry = item.entry;
       const pack = state.packs.find((item) => item.id === entry.packId);
       const smoked = entryConsumption(entry);
-      return `<article class="history-item"><div><strong>${entry.remaining} zostava</strong><span>${formatDateTime(entry.createdAt)} | krabicka ${pack?.capacity || "?"}</span></div><strong>-${smoked}</strong></article>`;
+      const assigned = consumptionDay(entry) !== dayKey(new Date(entry.createdAt)) ? ` | zapocitane ${consumptionDay(entry)}` : "";
+      return `<article class="history-item"><div><strong>${entry.remaining} zostava</strong><span>${formatDateTime(entry.createdAt)} | krabicka ${pack?.capacity || "?"}${assigned}</span></div><strong>-${smoked}</strong></article>`;
     })
     .join("");
 }
@@ -191,7 +265,7 @@ function render() {
   renderHistory();
 }
 
-function addEntry(remaining) {
+function addEntry(remaining, options = {}) {
   const pack = activePack();
   if (!pack) {
     els.saveHint.textContent = "Najprv otvor novu krabicku.";
@@ -209,15 +283,17 @@ function addEntry(remaining) {
     return;
   }
 
+  const now = new Date();
   state.entries.push({
     id: id("entry"),
     packId: pack.id,
     remaining,
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
+    consumptionDate: options.assignToPreviousDay ? previousDayKey(now) : dayKey(now),
   });
   saveState();
   els.stateForm.reset();
-  els.saveHint.textContent = "Stav ulozeny.";
+  els.saveHint.textContent = options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny.";
   render();
 }
 
@@ -250,12 +326,26 @@ function saveDayContext() {
   saveState();
 }
 
+function addAdjustment(date, amount, note) {
+  state.adjustments.push({
+    id: id("adjustment"),
+    date,
+    amount,
+    note,
+    createdAt: new Date().toISOString(),
+  });
+  saveState();
+  els.adjustmentAmountInput.value = "";
+  els.adjustmentNoteInput.value = "";
+  render();
+}
+
 function exportCsv() {
   const rows = [
-    ["type", "date", "pack_id", "capacity", "remaining", "smoked_since_previous", "tags", "stress", "note"],
+    ["type", "date", "pack_id", "capacity", "remaining", "smoked_since_previous", "consumption_date", "tags", "stress", "note"],
     ...state.entries.map((entry) => {
       const pack = state.packs.find((item) => item.id === entry.packId);
-      const day = state.days[dayKey(new Date(entry.createdAt))] || {};
+      const day = state.days[consumptionDay(entry)] || {};
       return [
         "entry",
         entry.createdAt,
@@ -263,9 +353,25 @@ function exportCsv() {
         pack?.capacity || "",
         entry.remaining,
         entryConsumption(entry),
+        consumptionDay(entry),
         (day.tags || []).join(";"),
         day.stress ?? "",
         day.note || "",
+      ];
+    }),
+    ...(state.adjustments || []).map((adjustment) => {
+      const day = state.days[adjustment.date] || {};
+      return [
+        "adjustment",
+        adjustment.createdAt,
+        "",
+        "",
+        "",
+        adjustment.amount,
+        adjustment.date,
+        (day.tags || []).join(";"),
+        day.stress ?? "",
+        adjustment.note || day.note || "",
       ];
     }),
   ];
@@ -283,12 +389,17 @@ function exportCsv() {
 
 els.stateForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  addEntry(Number(els.remainingInput.value));
+  addEntry(Number(els.remainingInput.value), { assignToPreviousDay: els.morningStateInput.checked });
 });
 
 els.packForm.addEventListener("submit", (event) => {
   event.preventDefault();
   openPack(Number(els.capacityInput.value));
+});
+
+els.adjustmentForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addAdjustment(els.adjustmentDateInput.value, Number(els.adjustmentAmountInput.value), els.adjustmentNoteInput.value.trim());
 });
 
 els.contextForm.addEventListener("submit", (event) => {
@@ -301,7 +412,7 @@ els.periodSelect.addEventListener("change", renderOverview);
 els.exportCsvButton.addEventListener("click", exportCsv);
 els.clearDataButton.addEventListener("click", () => {
   if (!confirm("Vymazat vsetky lokalne data?")) return;
-  state = { packs: [], entries: [], days: {} };
+  state = { packs: [], entries: [], days: {}, adjustments: [] };
   saveState();
   renderCurrentDay();
   render();
