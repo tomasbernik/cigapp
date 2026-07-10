@@ -126,6 +126,13 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatDayKey(value) {
+  return new Intl.DateTimeFormat("sk-SK", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(new Date(`${value}T12:00:00`));
+}
+
 function formatLongDate(value) {
   return new Intl.DateTimeFormat("sk-SK", {
     weekday: "long",
@@ -161,7 +168,12 @@ function consumptionDay(entry) {
 
 function entryConsumption(entry) {
   const previous = previousEntry(entry);
-  if (!previous) return 0;
+  if (!previous) {
+    const pack = state.packs.find((item) => item.id === entry.packId);
+    if (!pack) return 0;
+
+    return Math.max(0, pack.capacity - entry.remaining);
+  }
 
   return Math.max(0, previous.remaining - entry.remaining);
 }
@@ -219,6 +231,27 @@ function signedAmount(value) {
   return value > 0 ? `+${value}` : String(value);
 }
 
+function adjustmentLabel(value) {
+  const amount = Number(value) || 0;
+  if (amount > 0) return `+${amount} k dnu`;
+  if (amount < 0) return `${amount} z dna`;
+  return "0";
+}
+
+function shouldDefaultMorningState() {
+  const pack = activePack();
+  const last = latestEntry(pack?.id);
+  if (!pack || !last) return false;
+
+  const today = dayKey();
+  const hasEntryToday = state.entries.some((entry) => entry.packId === pack.id && dayKey(new Date(entry.createdAt)) === today);
+  return !hasEntryToday && dayKey(new Date(last.createdAt)) < today;
+}
+
+function updateMorningStateDefault() {
+  els.morningStateInput.checked = shouldDefaultMorningState();
+}
+
 function selectedDayStart() {
   return new Date(`${selectedCalendarDay}T00:00:00`);
 }
@@ -237,6 +270,14 @@ function dayOpeningState(events) {
         remaining: previous.remaining,
         capacity: pack?.capacity || "?",
         label: "Pred prvym zapocitanym fajcenim",
+      };
+    }
+
+    if (pack) {
+      return {
+        remaining: pack.capacity,
+        capacity: pack.capacity,
+        label: "Stav pri otvoreni krabicky",
       };
     }
   }
@@ -302,6 +343,7 @@ function renderTags() {
 
 function renderCurrentDay() {
   const day = state.days[dayKey()] || { tags: [], stress: 0, note: "" };
+  updateMorningStateDefault();
   els.adjustmentDateInput.value = dayKey();
   els.stressInput.value = day.stress || 0;
   els.noteInput.value = day.note || "";
@@ -418,12 +460,13 @@ function renderDayDetail() {
       const amount = Number(event.amount) || 0;
       const note = event.adjustment.note ? ` | ${event.adjustment.note}` : "";
       const amountClass = amount < 0 ? "negative" : "positive";
-      return `<li><span>Manualna uprava${note}</span><strong class="${amountClass}">${signedAmount(amount)}</strong></li>`;
+      return `<li><span>Oprava denneho poctu${note}</span><strong class="${amountClass}">${adjustmentLabel(amount)}</strong></li>`;
     }
 
     const pack = state.packs.find((item) => item.id === event.entry.packId);
-    const assigned = event.date !== dayKey(new Date(event.entry.createdAt)) ? " | ranny stav" : "";
-    return `<li><span>${formatDateTime(event.entry.createdAt)} | vyfajcene od posledneho stavu | zostava ${event.entry.remaining} z ${pack?.capacity || "?"}${assigned}</span><strong class="positive">+${event.amount}</strong></li>`;
+    const assigned =
+      event.date !== dayKey(new Date(event.entry.createdAt)) ? ` | ranny stav, priradene k ${formatDayKey(event.date)}` : "";
+    return `<li><span>${formatDateTime(event.entry.createdAt)} | zostava ${event.entry.remaining} z ${pack?.capacity || "?"}${assigned}</span><strong class="positive">${event.amount} vyfajcenych</strong></li>`;
   });
 
   els.dayDetail.innerHTML = `
@@ -475,16 +518,19 @@ function renderHistory() {
       if (item.type === "adjustment") {
         const adjustment = item.adjustment;
         const amount = Number(adjustment.amount) || 0;
-        const sign = amount > 0 ? "+" : "";
         const note = adjustment.note ? ` | ${adjustment.note}` : "";
-        return `<article class="history-item"><div><strong>Manualna uprava ${sign}${amount}</strong><span>${adjustment.date}${note}</span></div><strong>${sign}${amount}</strong></article>`;
+        const amountClass = amount < 0 ? "negative" : "positive";
+        return `<article class="history-item"><div><strong>Oprava denneho poctu</strong><span>${formatDayKey(adjustment.date)}${note}</span></div><strong class="${amountClass}">${adjustmentLabel(amount)}</strong></article>`;
       }
 
       const entry = item.entry;
       const pack = state.packs.find((item) => item.id === entry.packId);
       const smoked = entryConsumption(entry);
-      const assigned = consumptionDay(entry) !== dayKey(new Date(entry.createdAt)) ? ` | zapocitane ${consumptionDay(entry)}` : "";
-      return `<article class="history-item"><div><strong>${entry.remaining} zostava</strong><span>${formatDateTime(entry.createdAt)} | krabicka ${pack?.capacity || "?"}${assigned}</span></div><strong>-${smoked}</strong></article>`;
+      const assigned =
+        consumptionDay(entry) !== dayKey(new Date(entry.createdAt)) ? ` | priradene k ${formatDayKey(consumptionDay(entry))}` : "";
+      const result = smoked > 0 ? `${smoked} vyfajcenych` : "novy stav";
+      const title = smoked > 0 ? `${smoked} vyfajcenych` : "Novy stav";
+      return `<article class="history-item"><div><strong>${title}</strong><span>${formatDateTime(entry.createdAt)} | zostava ${entry.remaining} z ${pack?.capacity || "?"}${assigned}</span></div><strong>${result}</strong></article>`;
     })
     .join("");
 }
@@ -717,6 +763,7 @@ async function addEntry(remaining, options = {}) {
   await syncRemote(() => supabaseClient.from("entries").upsert(entryToRow(entry)));
   els.stateForm.reset();
   els.saveHint.textContent = options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny.";
+  updateMorningStateDefault();
   render();
 }
 
@@ -761,6 +808,7 @@ async function openPack(capacity) {
     const results = await Promise.all(operations);
     return { error: results.find((result) => result.error)?.error || null };
   });
+  updateMorningStateDefault();
   render();
 }
 
