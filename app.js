@@ -801,12 +801,16 @@ async function openPack(capacity) {
   saveState();
   await syncRemote(async () => {
     const inactiveRows = state.packs.filter((item) => item.id !== pack.id).map(packToRow);
-    const operations = [supabaseClient.from("packs").upsert(packToRow(pack))];
-    if (inactiveRows.length) operations.push(supabaseClient.from("packs").upsert(inactiveRows));
+    const packResult = await supabaseClient.from("packs").upsert(packToRow(pack));
+    if (packResult.error) return packResult;
+
+    if (inactiveRows.length) {
+      const inactiveResult = await supabaseClient.from("packs").upsert(inactiveRows);
+      if (inactiveResult.error) return inactiveResult;
+    }
+
     const newEntries = [closedEntry, state.entries.at(-1)].filter(Boolean).map(entryToRow);
-    operations.push(supabaseClient.from("entries").upsert(newEntries));
-    const results = await Promise.all(operations);
-    return { error: results.find((result) => result.error)?.error || null };
+    return supabaseClient.from("entries").upsert(newEntries);
   });
   updateMorningStateDefault();
   render();
