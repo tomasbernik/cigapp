@@ -9,7 +9,6 @@ Mobilna webova appka na zapisovanie aktualneho stavu cigariet v otvorenej krabic
 - Cas sa ulozi automaticky.
 - Appka dopocita spotrebu medzi po sebe iducimi stavmi.
 - Casove bloky sa zobrazia az v prehlade.
-- Okolnosti dna, ako alkohol, stres, kava alebo vecer vonku, sa ukladaju samostatne k danemu dnu.
 - Data sa ukladaju lokalne v prehliadaci a daju sa exportovat do CSV.
 
 ## Spustenie

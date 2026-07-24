@@ -2,7 +2,6 @@ const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
 const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
-const tags = ["alkohol", "stresovy den", "kava", "vecer vonku", "praca", "nuda"];
 const blocks = [
   { id: "rano", label: "Rano", from: 5, to: 9 },
   { id: "doobeda", label: "Doobeda", from: 9, to: 12 },
@@ -40,10 +39,6 @@ const els = {
   adjustmentDateInput: document.querySelector("#adjustmentDateInput"),
   adjustmentAmountInput: document.querySelector("#adjustmentAmountInput"),
   adjustmentNoteInput: document.querySelector("#adjustmentNoteInput"),
-  tagGrid: document.querySelector("#tagGrid"),
-  contextForm: document.querySelector("#contextForm"),
-  stressInput: document.querySelector("#stressInput"),
-  noteInput: document.querySelector("#noteInput"),
   periodSelect: document.querySelector("#periodSelect"),
   totalSmoked: document.querySelector("#totalSmoked"),
   dailyAverage: document.querySelector("#dailyAverage"),
@@ -335,21 +330,9 @@ function getEventsForPeriod(period) {
   return allConsumptionEvents().filter((event) => event.date >= startKey);
 }
 
-function renderTags() {
-  els.tagGrid.innerHTML = tags
-    .map((tag) => `<label><input type="checkbox" name="tags" value="${tag}">${tag}</label>`)
-    .join("");
-}
-
 function renderCurrentDay() {
-  const day = state.days[dayKey()] || { tags: [], stress: 0, note: "" };
   updateMorningStateDefault();
   els.adjustmentDateInput.value = dayKey();
-  els.stressInput.value = day.stress || 0;
-  els.noteInput.value = day.note || "";
-  els.tagGrid.querySelectorAll("input").forEach((input) => {
-    input.checked = day.tags?.includes(input.value) || false;
-  });
 }
 
 function renderStatus() {
@@ -831,17 +814,6 @@ function renderPackOptions() {
   }
 }
 
-async function saveDayContext() {
-  state.days[dayKey()] = {
-    tags: [...els.tagGrid.querySelectorAll("input:checked")].map((input) => input.value),
-    stress: Number(els.stressInput.value),
-    note: els.noteInput.value.trim(),
-    updatedAt: new Date().toISOString(),
-  };
-  saveState();
-  await syncRemote(() => supabaseClient.from("days").upsert(dayToRow(dayKey(), state.days[dayKey()])));
-}
-
 async function addAdjustment(date, amount, note) {
   const adjustment = {
     id: id("adjustment"),
@@ -926,12 +898,6 @@ els.capacityChoices.forEach((input) => {
 els.adjustmentForm.addEventListener("submit", (event) => {
   event.preventDefault();
   addAdjustment(els.adjustmentDateInput.value, Number(els.adjustmentAmountInput.value), els.adjustmentNoteInput.value.trim());
-});
-
-els.contextForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  saveDayContext();
-  render();
 });
 
 els.periodSelect.addEventListener("change", renderOverview);
@@ -1026,7 +992,6 @@ els.signOutButton.addEventListener("click", async () => {
   render();
 });
 
-renderTags();
 renderCurrentDay();
 renderPackOptions();
 render();
