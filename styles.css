@@ -322,6 +322,11 @@ input[type="range"] {
   font-size: 1.6rem;
 }
 
+.stats-grid .pack-breakdown {
+  margin-top: 6px;
+  line-height: 1.35;
+}
+
 .calendar-actions {
   display: flex;
   align-items: center;

@@ -5,10 +5,14 @@ create table if not exists public.packs (
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   capacity integer not null check (capacity > 0),
+  price numeric(10, 2) check (price >= 0),
   active boolean not null default false,
   opened_at timestamptz not null,
   created_at timestamptz not null default now()
 );
+
+alter table public.packs
+  add column if not exists price numeric(10, 2) check (price >= 0);
 
 create table if not exists public.entries (
   id text primary key,

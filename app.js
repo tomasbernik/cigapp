@@ -1,5 +1,7 @@
 const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
+const PACK_PRICE_MIGRATION = "pack-prices-2026-07";
+const DEFAULT_PACK_PRICES = { 30: 9.1, 40: 11.9 };
 const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
 const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
@@ -26,6 +28,7 @@ const els = {
   openPackToggle: document.querySelector("#openPackToggle"),
   packOptions: document.querySelector("#packOptions"),
   capacityInput: document.querySelector("#capacityInput"),
+  packPriceInput: document.querySelector("#packPriceInput"),
   capacityChoices: [...document.querySelectorAll('input[name="capacityChoice"]')],
   adjustmentForm: document.querySelector("#adjustmentForm"),
   adjustmentDateInput: document.querySelector("#adjustmentDateInput"),
@@ -35,6 +38,7 @@ const els = {
   totalSmoked: document.querySelector("#totalSmoked"),
   dailyAverage: document.querySelector("#dailyAverage"),
   packsUsed: document.querySelector("#packsUsed"),
+  packsBreakdown: document.querySelector("#packsBreakdown"),
   calendarMonthLabel: document.querySelector("#calendarMonthLabel"),
   calendarGrid: document.querySelector("#calendarGrid"),
   dayDetail: document.querySelector("#dayDetail"),
@@ -63,6 +67,28 @@ function loadState() {
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   localStorage.removeItem(LEGACY_STORAGE_KEY);
+}
+
+function packPriceMigrationKey(scope) {
+  return `${STORAGE_KEY}-${PACK_PRICE_MIGRATION}-${scope}`;
+}
+
+async function migratePackPrices(scope, sync = false) {
+  const migrationKey = packPriceMigrationKey(scope);
+  if (localStorage.getItem(migrationKey)) return;
+
+  const changedPacks = state.packs.filter((pack) => DEFAULT_PACK_PRICES[pack.capacity] != null);
+  changedPacks.forEach((pack) => {
+    pack.price = DEFAULT_PACK_PRICES[pack.capacity];
+  });
+  saveState();
+
+  if (sync && changedPacks.length) {
+    const success = await syncRemote(() => supabaseClient.from("packs").upsert(changedPacks.map(packToRow)));
+    if (!success) return;
+  }
+
+  localStorage.setItem(migrationKey, "done");
 }
 
 function setSyncStatus(message) {
@@ -365,11 +391,23 @@ function renderOverview() {
   const countedEvents = events.filter((event) => event.amount !== 0);
   const total = countedEvents.reduce((sum, event) => sum + event.amount, 0);
   const days = calendarDayCount(start, end);
-  const packs = new Set(events.filter((event) => event.entry).map((event) => event.entry.packId));
+  const packIds = new Set(events.filter((event) => event.entry).map((event) => event.entry.packId));
+  const packs = state.packs.filter((pack) => packIds.has(pack.id));
+  const packsByCapacity = packs.reduce((groups, pack) => {
+    groups[pack.capacity] = (groups[pack.capacity] || 0) + 1;
+    return groups;
+  }, {});
 
   els.totalSmoked.textContent = String(total);
   els.dailyAverage.textContent = days ? (total / days).toFixed(1) : "0";
-  els.packsUsed.textContent = String(packs.size);
+  els.packsUsed.textContent = String(packs.length);
+  els.packsBreakdown.textContent = Object.entries(packsByCapacity)
+    .sort(([capacityA], [capacityB]) => Number(capacityA) - Number(capacityB))
+    .map(([capacity, count]) => {
+      const label = count === 1 ? "krabicka" : count >= 2 && count <= 4 ? "krabicky" : "krabiciek";
+      return `${count} ${label} po ${capacity} cig.`;
+    })
+    .join(", ");
 }
 
 function renderCalendar() {
@@ -541,6 +579,7 @@ function packToRow(pack) {
     id: pack.id,
     user_id: currentUser.id,
     capacity: pack.capacity,
+    price: pack.price ?? null,
     active: pack.active,
     opened_at: pack.openedAt,
   };
@@ -583,6 +622,7 @@ function rowToPack(row) {
   return {
     id: row.id,
     capacity: row.capacity,
+    price: row.price == null ? null : Number(row.price),
     active: row.active,
     openedAt: row.opened_at,
   };
@@ -652,6 +692,7 @@ async function loadRemoteState() {
   if (!remoteHasData && localHasData) {
     remoteReady = true;
     await uploadFullState();
+    await migratePackPrices(currentUser.id, true);
     setSyncStatus(`Lokalne data boli prenesene do Supabase: ${displayNameForUser(currentUser)}`);
   } else {
     state = {
@@ -662,6 +703,7 @@ async function loadRemoteState() {
     };
     saveState();
     remoteReady = true;
+    await migratePackPrices(currentUser.id, true);
   }
 
   renderCurrentDay();
@@ -741,7 +783,7 @@ async function addEntry(remaining, options = {}) {
   render();
 }
 
-async function openPack(capacity) {
+async function openPack(capacity, price) {
   const previousPack = activePack();
   const previousLast = previousPack ? latestEntry(previousPack.id) : null;
   const closedEntry =
@@ -762,6 +804,7 @@ async function openPack(capacity) {
   const pack = {
     id: id("pack"),
     capacity,
+    price,
     active: true,
     openedAt: new Date().toISOString(),
   };
@@ -787,6 +830,7 @@ async function openPack(capacity) {
     return supabaseClient.from("entries").upsert(newEntries);
   });
   updateMorningStateDefault();
+  updateDefaultPackPrice();
   render();
 }
 
@@ -803,6 +847,11 @@ function renderPackOptions() {
   if (!customSelected) {
     els.capacityInput.value = selectedCapacity();
   }
+}
+
+function updateDefaultPackPrice() {
+  const defaultPrice = DEFAULT_PACK_PRICES[selectedCapacity()];
+  els.packPriceInput.value = defaultPrice == null ? "" : defaultPrice.toFixed(2);
 }
 
 async function addAdjustment(date, amount, note) {
@@ -823,7 +872,7 @@ async function addAdjustment(date, amount, note) {
 
 function exportCsv() {
   const rows = [
-    ["type", "date", "pack_id", "capacity", "remaining", "smoked_since_previous", "consumption_date", "tags", "stress", "note"],
+    ["type", "date", "pack_id", "capacity", "price", "remaining", "smoked_since_previous", "consumption_date", "tags", "stress", "note"],
     ...state.entries.map((entry) => {
       const pack = state.packs.find((item) => item.id === entry.packId);
       const day = state.days[consumptionDay(entry)] || {};
@@ -832,6 +881,7 @@ function exportCsv() {
         entry.createdAt,
         entry.packId,
         pack?.capacity || "",
+        pack?.price ?? "",
         entry.remaining,
         entryConsumption(entry),
         consumptionDay(entry),
@@ -845,6 +895,7 @@ function exportCsv() {
       return [
         "adjustment",
         adjustment.createdAt,
+        "",
         "",
         "",
         "",
@@ -875,7 +926,8 @@ els.stateForm.addEventListener("submit", (event) => {
 
 els.packForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  openPack(selectedCapacity());
+  const price = els.packPriceInput.value === "" ? null : Number(els.packPriceInput.value);
+  openPack(selectedCapacity(), price);
 });
 
 els.openPackToggle.addEventListener("click", () => {
@@ -883,7 +935,10 @@ els.openPackToggle.addEventListener("click", () => {
 });
 
 els.capacityChoices.forEach((input) => {
-  input.addEventListener("change", renderPackOptions);
+  input.addEventListener("change", () => {
+    renderPackOptions();
+    updateDefaultPackPrice();
+  });
 });
 
 els.adjustmentForm.addEventListener("submit", (event) => {
@@ -985,6 +1040,8 @@ els.signOutButton.addEventListener("click", async () => {
 
 renderCurrentDay();
 renderPackOptions();
+updateDefaultPackPrice();
+migratePackPrices("local");
 render();
 
 if (supabaseClient) {
