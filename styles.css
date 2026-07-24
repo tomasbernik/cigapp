@@ -322,34 +322,6 @@ input[type="range"] {
   font-size: 1.6rem;
 }
 
-.bars {
-  display: grid;
-  gap: 10px;
-}
-
-.bar-row {
-  display: grid;
-  grid-template-columns: 86px 1fr 34px;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.bar-track {
-  overflow: hidden;
-  height: 14px;
-  border-radius: 999px;
-  background: #e8edf4;
-}
-
-.bar-fill {
-  height: 100%;
-  min-width: 3px;
-  border-radius: inherit;
-  background: var(--green);
-}
-
 .calendar-actions {
   display: flex;
   align-items: center;

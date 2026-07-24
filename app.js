@@ -2,14 +2,6 @@ const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
 const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
-const blocks = [
-  { id: "rano", label: "Rano", from: 5, to: 9 },
-  { id: "doobeda", label: "Doobeda", from: 9, to: 12 },
-  { id: "poobede", label: "Poobede", from: 12, to: 17 },
-  { id: "vecer", label: "Vecer", from: 17, to: 22 },
-  { id: "noc", label: "Noc", from: 22, to: 29 },
-];
-
 const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
 let state = loadState();
 let currentUser = null;
@@ -43,7 +35,6 @@ const els = {
   totalSmoked: document.querySelector("#totalSmoked"),
   dailyAverage: document.querySelector("#dailyAverage"),
   packsUsed: document.querySelector("#packsUsed"),
-  timeBars: document.querySelector("#timeBars"),
   calendarMonthLabel: document.querySelector("#calendarMonthLabel"),
   calendarGrid: document.querySelector("#calendarGrid"),
   dayDetail: document.querySelector("#dayDetail"),
@@ -189,7 +180,6 @@ function entryConsumptionEvent(entry) {
     amount,
     date: consumptionDay(entry),
     createdAt: entry.createdAt,
-    blockAt: entry.createdAt,
     entry,
   };
 }
@@ -201,7 +191,6 @@ function adjustmentEvents() {
     amount: Number(adjustment.amount) || 0,
     date: adjustment.date,
     createdAt: adjustment.createdAt,
-    blockAt: adjustment.createdAt,
     adjustment,
   }));
 }
@@ -300,34 +289,46 @@ function dayOpeningState(events) {
   };
 }
 
-function blockFor(dateValue) {
-  const date = new Date(dateValue);
-  const hour = date.getHours();
-  const normalized = hour < 5 ? hour + 24 : hour;
-  return blocks.find((block) => normalized >= block.from && normalized < block.to) || blocks[0];
+function completedPeriod(period) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setDate(end.getDate() - 1);
+  const start = new Date(today);
+
+  if (period === "week") {
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  } else if (period === "30" || period === "365") {
+    start.setDate(start.getDate() - Number(period));
+  } else if (period === "year") {
+    start.setMonth(0, 1);
+  } else {
+    const completedEvents = allConsumptionEvents()
+      .filter((event) => event.date < dayKey(today))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (completedEvents.length) {
+      const [year, month, day] = completedEvents[0].date.split("-").map(Number);
+      start.setFullYear(year, month - 1, day);
+    } else {
+      start.setTime(today.getTime());
+    }
+  }
+
+  return { start, end };
+}
+
+function calendarDayCount(start, end) {
+  if (start > end) return 0;
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.floor((endUtc - startUtc) / 86400000) + 1;
 }
 
 function getEventsForPeriod(period) {
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-
-  let startKey = dayKey(start);
-  if (period === "7" || period === "30") {
-    start.setDate(start.getDate() - Number(period) + 1);
-    startKey = dayKey(start);
-  } else if (period === "month") {
-    start.setDate(1);
-    startKey = dayKey(start);
-  } else if (period === "all") {
-    return allConsumptionEvents();
-  }
-
-  if (period === "today") {
-    return allConsumptionEvents().filter((event) => event.date === startKey);
-  }
-
-  return allConsumptionEvents().filter((event) => event.date >= startKey);
+  const { start, end } = completedPeriod(period);
+  const startKey = dayKey(start);
+  const endKey = dayKey(end);
+  return allConsumptionEvents().filter((event) => event.date >= startKey && event.date <= endKey);
 }
 
 function renderCurrentDay() {
@@ -358,27 +359,17 @@ function renderStatus() {
 }
 
 function renderOverview() {
-  const events = getEventsForPeriod(els.periodSelect.value);
+  const period = els.periodSelect.value;
+  const { start, end } = completedPeriod(period);
+  const events = getEventsForPeriod(period);
   const countedEvents = events.filter((event) => event.amount !== 0);
   const total = countedEvents.reduce((sum, event) => sum + event.amount, 0);
-  const days = new Set(countedEvents.map((event) => event.date));
+  const days = calendarDayCount(start, end);
   const packs = new Set(events.filter((event) => event.entry).map((event) => event.entry.packId));
-  const byBlock = Object.fromEntries(blocks.map((block) => [block.id, 0]));
 
-  countedEvents.forEach((event) => {
-    byBlock[blockFor(event.blockAt).id] += event.amount;
-  });
-
-  const maxBlock = Math.max(1, ...Object.values(byBlock).map((value) => Math.abs(value)));
   els.totalSmoked.textContent = String(total);
-  els.dailyAverage.textContent = days.size ? (total / days.size).toFixed(1) : "0";
+  els.dailyAverage.textContent = days ? (total / days).toFixed(1) : "0";
   els.packsUsed.textContent = String(packs.size);
-  els.timeBars.innerHTML = blocks
-    .map((block) => {
-      const value = byBlock[block.id];
-      return `<div class="bar-row"><span>${block.label}</span><div class="bar-track"><div class="bar-fill" style="width:${(Math.abs(value) / maxBlock) * 100}%"></div></div><strong>${value}</strong></div>`;
-    })
-    .join("");
 }
 
 function renderCalendar() {
