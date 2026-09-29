@@ -23,8 +23,9 @@ This creates:
 - `packs`
 - `entries`
 - `days`
+- `adjustments`
 
-All three tables use Supabase Auth user IDs and Row Level Security, so the public browser key cannot read or write another user's data.
+All four tables use Supabase Auth user IDs and Row Level Security, so the public browser key cannot read or write another user's data.
 
 ## 3. Enable auth
 
@@ -43,11 +44,11 @@ For local testing, add:
 http://localhost:8000
 ```
 
-## 4. App config
+## 4. Legacy app config
 
-The browser app uses these public Supabase values in `app.js`:
+This directory documents the previous Supabase backend for rollback and data
+migration only. The active browser app no longer reads Supabase configuration.
 
-- Project URL: `https://zaibtcbpfjnraefxopsv.supabase.co`
-- Publishable key: `sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO`
-
-The publishable key is safe to ship in browser code. Never put the `service_role` key in this app.
+Do not add even publishable API keys to the repository. Retrieve any legacy
+runtime value from the Supabase dashboard only when an explicitly approved
+migration or rollback needs it. Never put a `service_role` key in browser code.

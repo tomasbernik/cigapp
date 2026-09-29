@@ -1,20 +1,20 @@
+import {
+  signInWithCredentials,
+  signUpWithCredentials,
+  validateCredentials,
+} from "./auth.js";
+import { neonClient } from "./neon-client.js";
+
 const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
 const PACK_PRICE_MIGRATION = "pack-prices-2026-07";
 const DEFAULT_PACK_PRICES = { 30: 9.1, 40: 11.9 };
-const SUPABASE_URL = "https://zaibtcbpfjnraefxopsv.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_q13caChpMM7g11n5dFdTSA_n9XHlVCO";
 const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
 let state = loadState();
 let currentUser = null;
 let remoteReady = false;
 let visibleCalendarDate = new Date();
 let selectedCalendarDay = dayKey();
-const supabaseClient =
-  window.supabase?.createClient?.(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-  }) || null;
-
 const els = {
   currentCount: document.querySelector("#currentCount"),
   currentCapacity: document.querySelector("#currentCapacity"),
@@ -48,6 +48,7 @@ const els = {
   exportCsvButton: document.querySelector("#exportCsvButton"),
   clearDataButton: document.querySelector("#clearDataButton"),
   authForm: document.querySelector("#authForm"),
+  signUpButton: document.querySelector("#signUpButton"),
   usernameInput: document.querySelector("#usernameInput"),
   passwordInput: document.querySelector("#passwordInput"),
   signOutButton: document.querySelector("#signOutButton"),
@@ -84,7 +85,7 @@ async function migratePackPrices(scope, sync = false) {
   saveState();
 
   if (sync && changedPacks.length) {
-    const success = await syncRemote(() => supabaseClient.from("packs").upsert(changedPacks.map(packToRow)));
+    const success = await syncRemote(() => neonClient.from("packs").upsert(changedPacks.map(packToRow)));
     if (!success) return;
   }
 
@@ -96,15 +97,7 @@ function setSyncStatus(message) {
 }
 
 function remoteEnabled() {
-  return Boolean(supabaseClient && currentUser && remoteReady);
-}
-
-function normalizeUsername(value) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-}
-
-function authEmailForUsername(username) {
-  return `${username}@cigapp.invalid`;
+  return Boolean(neonClient && currentUser && remoteReady);
 }
 
 function displayNameForUser(user) {
@@ -556,10 +549,10 @@ function render() {
 }
 
 function renderAuth() {
-  if (!supabaseClient) {
+  if (!neonClient) {
     els.authForm.classList.add("hidden");
     els.signOutButton.classList.add("hidden");
-    setSyncStatus("Lokalny rezim. Supabase klient sa nenacital.");
+    setSyncStatus("Lokalny rezim. Doplň Neon Auth URL a Data API URL v config.js.");
     return;
   }
 
@@ -663,7 +656,7 @@ function rowsToDays(rows) {
 }
 
 async function loadRemoteState() {
-  if (!supabaseClient || !currentUser) return;
+  if (!neonClient || !currentUser) return;
   remoteReady = false;
   renderAuth();
 
@@ -673,15 +666,15 @@ async function loadRemoteState() {
     { data: days, error: daysError },
     { data: adjustments, error: adjustmentsError },
   ] = await Promise.all([
-    supabaseClient.from("packs").select("*").order("opened_at", { ascending: true }),
-    supabaseClient.from("entries").select("*").order("created_at", { ascending: true }),
-    supabaseClient.from("days").select("*").order("day", { ascending: true }),
-    supabaseClient.from("adjustments").select("*").order("created_at", { ascending: true }),
+    neonClient.from("packs").select("*").order("opened_at", { ascending: true }),
+    neonClient.from("entries").select("*").order("created_at", { ascending: true }),
+    neonClient.from("days").select("*").order("day", { ascending: true }),
+    neonClient.from("adjustments").select("*").order("created_at", { ascending: true }),
   ]);
 
   const error = packsError || entriesError || daysError || adjustmentsError;
   if (error) {
-    setSyncStatus(`Supabase chyba: ${error.message}`);
+    setSyncStatus(`Neon chyba: ${error.message}`);
     remoteReady = false;
     return;
   }
@@ -693,7 +686,7 @@ async function loadRemoteState() {
     remoteReady = true;
     await uploadFullState();
     await migratePackPrices(currentUser.id, true);
-    setSyncStatus(`Lokalne data boli prenesene do Supabase: ${displayNameForUser(currentUser)}`);
+    setSyncStatus(`Lokalne data boli prenesene do Neon: ${displayNameForUser(currentUser)}`);
   } else {
     state = {
       packs: packs.map(rowToPack),
@@ -715,7 +708,7 @@ async function syncRemote(operation) {
 
   const { error } = await operation();
   if (error) {
-    setSyncStatus(`Supabase chyba: ${error.message}`);
+    setSyncStatus(`Neon chyba: ${error.message}`);
     return false;
   }
 
@@ -732,15 +725,15 @@ async function uploadFullState() {
   const adjustmentRows = state.adjustments.map(adjustmentToRow);
 
   const operations = [];
-  if (packRows.length) operations.push(supabaseClient.from("packs").upsert(packRows));
-  if (entryRows.length) operations.push(supabaseClient.from("entries").upsert(entryRows));
-  if (dayRows.length) operations.push(supabaseClient.from("days").upsert(dayRows));
-  if (adjustmentRows.length) operations.push(supabaseClient.from("adjustments").upsert(adjustmentRows));
+  if (packRows.length) operations.push(neonClient.from("packs").upsert(packRows));
+  if (entryRows.length) operations.push(neonClient.from("entries").upsert(entryRows));
+  if (dayRows.length) operations.push(neonClient.from("days").upsert(dayRows));
+  if (adjustmentRows.length) operations.push(neonClient.from("adjustments").upsert(adjustmentRows));
 
   const results = await Promise.all(operations);
   const error = results.find((result) => result.error)?.error;
   if (error) {
-    setSyncStatus(`Supabase chyba: ${error.message}`);
+    setSyncStatus(`Neon chyba: ${error.message}`);
     return false;
   }
 
@@ -776,7 +769,7 @@ async function addEntry(remaining, options = {}) {
   };
   state.entries.push(entry);
   saveState();
-  await syncRemote(() => supabaseClient.from("entries").upsert(entryToRow(entry)));
+  await syncRemote(() => neonClient.from("entries").upsert(entryToRow(entry)));
   els.stateForm.reset();
   els.saveHint.textContent = options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny.";
   updateMorningStateDefault();
@@ -818,16 +811,16 @@ async function openPack(capacity, price) {
   saveState();
   await syncRemote(async () => {
     const inactiveRows = state.packs.filter((item) => item.id !== pack.id).map(packToRow);
-    const packResult = await supabaseClient.from("packs").upsert(packToRow(pack));
+    const packResult = await neonClient.from("packs").upsert(packToRow(pack));
     if (packResult.error) return packResult;
 
     if (inactiveRows.length) {
-      const inactiveResult = await supabaseClient.from("packs").upsert(inactiveRows);
+      const inactiveResult = await neonClient.from("packs").upsert(inactiveRows);
       if (inactiveResult.error) return inactiveResult;
     }
 
     const newEntries = [closedEntry, state.entries.at(-1)].filter(Boolean).map(entryToRow);
-    return supabaseClient.from("entries").upsert(newEntries);
+    return neonClient.from("entries").upsert(newEntries);
   });
   updateMorningStateDefault();
   updateDefaultPackPrice();
@@ -864,7 +857,7 @@ async function addAdjustment(date, amount, note) {
   };
   state.adjustments.push(adjustment);
   saveState();
-  await syncRemote(() => supabaseClient.from("adjustments").upsert(adjustmentToRow(adjustment)));
+  await syncRemote(() => neonClient.from("adjustments").upsert(adjustmentToRow(adjustment)));
   els.adjustmentAmountInput.value = "";
   els.adjustmentNoteInput.value = "";
   render();
@@ -956,81 +949,85 @@ els.clearDataButton.addEventListener("click", async () => {
   saveState();
   if (remoteEnabled()) {
     const [{ error: adjustmentsError }, { error: entriesError }, { error: daysError }, { error: packsError }] = await Promise.all([
-      supabaseClient.from("adjustments").delete().eq("user_id", currentUser.id),
-      supabaseClient.from("entries").delete().eq("user_id", currentUser.id),
-      supabaseClient.from("days").delete().eq("user_id", currentUser.id),
-      supabaseClient.from("packs").delete().eq("user_id", currentUser.id),
+      neonClient.from("adjustments").delete().eq("user_id", currentUser.id),
+      neonClient.from("entries").delete().eq("user_id", currentUser.id),
+      neonClient.from("days").delete().eq("user_id", currentUser.id),
+      neonClient.from("packs").delete().eq("user_id", currentUser.id),
     ]);
     const error = adjustmentsError || entriesError || daysError || packsError;
-    if (error) setSyncStatus(`Supabase chyba: ${error.message}`);
+    if (error) setSyncStatus(`Neon chyba: ${error.message}`);
   }
   renderCurrentDay();
   render();
 });
 
-els.authForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!supabaseClient) return;
-
+function credentialsFromForm() {
   const rawUsername = els.usernameInput.value;
-  const username = normalizeUsername(rawUsername);
   const password = els.passwordInput.value;
-  if (!username || !password) return;
-
-  if (username.length < 3) {
-    setSyncStatus("Meno musi mat aspon 3 znaky.");
-    return;
+  const credentials = validateCredentials(rawUsername, password);
+  if (credentials.error) {
+    setSyncStatus(credentials.error);
+    return null;
   }
+  return { ...credentials, password };
+}
 
-  if (password.length < 6) {
-    setSyncStatus("Heslo musi mat aspon 6 znakov.");
-    return;
-  }
-
-  if (username !== rawUsername.trim().toLowerCase()) {
-    els.usernameInput.value = username;
-    setSyncStatus("Meno moze obsahovat len pismena bez diakritiky, cisla, _ alebo -.");
-    return;
-  }
-
-  const email = authEmailForUsername(username);
-  setSyncStatus("Prihlasujem...");
-  let { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-
-  if (error) {
-    const signup = await supabaseClient.auth.signUp({
-      email,
-      password,
-      options: { data: { username } },
-    });
-    data = signup.data;
-    error = signup.error;
-
-    if (error && /already|registered|exists/i.test(error.message)) {
-      setSyncStatus("Toto meno uz existuje. Skus ine meno alebo spravne heslo.");
-      return;
-    }
-  }
-
-  if (error) {
-    setSyncStatus(`Login chyba: ${error.message}`);
-    return;
-  }
-
-  currentUser = data.user || data.session?.user || null;
+async function finishAuthentication(data) {
+  currentUser = data?.user || data?.session?.user || null;
   remoteReady = false;
   els.passwordInput.value = "";
 
   if (currentUser) {
     await loadRemoteState();
   } else {
-    setSyncStatus("Ucet je vytvoreny, ale Supabase vyzaduje potvrdenie emailu. Vypni email confirmation v Supabase.");
+    setSyncStatus("Prihlasenie nevytvorilo relaciu. Skontroluj nastavenie Neon Auth.");
   }
+}
+
+els.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!neonClient) return;
+
+  const credentials = credentialsFromForm();
+  if (!credentials) return;
+
+  setSyncStatus("Prihlasujem...");
+  const { data, error } = await signInWithCredentials(neonClient, credentials.email, credentials.password);
+  if (error) {
+    setSyncStatus(`Prihlasenie zlyhalo: ${error.message}`);
+    return;
+  }
+  await finishAuthentication(data);
+});
+
+els.signUpButton.addEventListener("click", async () => {
+  if (!neonClient) return;
+
+  const credentials = credentialsFromForm();
+  if (!credentials) return;
+
+  setSyncStatus("Registrujem...");
+  const { data, error } = await signUpWithCredentials(
+    neonClient,
+    credentials.username,
+    credentials.email,
+    credentials.password,
+  );
+
+  if (error) {
+    setSyncStatus(
+      /already|registered|exists/i.test(error.message)
+        ? "Toto meno uz existuje. Prihlas sa spravnym heslom."
+        : `Registracia zlyhala: ${error.message}`,
+    );
+    return;
+  }
+  await finishAuthentication(data);
 });
 
 els.signOutButton.addEventListener("click", async () => {
-  if (!supabaseClient) return;
-  await supabaseClient.auth.signOut();
+  if (!neonClient) return;
+  await neonClient.auth.signOut();
   currentUser = null;
   remoteReady = false;
   state = loadState();
@@ -1044,8 +1041,8 @@ updateDefaultPackPrice();
 migratePackPrices("local");
 render();
 
-if (supabaseClient) {
-  supabaseClient.auth.getSession().then(({ data }) => {
+if (neonClient) {
+  neonClient.auth.getSession().then(({ data }) => {
     currentUser = data.session?.user || null;
     if (currentUser) {
       loadRemoteState();
@@ -1054,7 +1051,7 @@ if (supabaseClient) {
     }
   });
 
-  supabaseClient.auth.onAuthStateChange((_event, session) => {
+  neonClient.auth.onAuthStateChange((_event, session) => {
     const nextUser = session?.user || null;
     const changedUser = nextUser?.id !== currentUser?.id;
     currentUser = nextUser;

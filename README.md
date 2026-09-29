@@ -10,6 +10,7 @@ Mobilna webova appka na zapisovanie aktualneho stavu cigariet v otvorenej krabic
 - Appka dopocita spotrebu medzi po sebe iducimi stavmi.
 - Casove bloky sa zobrazia az v prehlade.
 - Data sa ukladaju lokalne v prehliadaci a daju sa exportovat do CSV.
+- Po prihlaseni sa synchronizuju cez Neon Auth a Neon Data API; offline/localStorage rezim ostava dostupny.
 
 ## Spustenie
 
@@ -23,4 +24,19 @@ Potom otvor:
 
 ```text
 http://localhost:8000
+```
+
+## Neon
+
+Do `config.js` dopln verejne Auth URL a Data API URL production vetvy. Nikdy
+sem nevkladaj Postgres connection string, API kluc ani heslo. Reprodukovatelna
+schema, testovanie a bezpecny plan migracie existujucich uctov/dat su v
+`neon/README.md` a `neon/MIGRATION.md`.
+
+Lokalne kontroly:
+
+```powershell
+pnpm install
+pnpm check
+pnpm test
 ```

@@ -20,6 +20,7 @@
             <input id="usernameInput" name="username" type="text" autocomplete="username" placeholder="meno" minlength="3" maxlength="32">
             <input id="passwordInput" name="password" type="password" autocomplete="current-password" placeholder="heslo" minlength="6" maxlength="72">
             <button type="submit">Prihlasit</button>
+            <button class="text-button" id="signUpButton" type="button">Registrovat</button>
           </form>
           <button class="text-button hidden" id="signOutButton" type="button">Odhlasit</button>
           <button class="icon-button" id="exportCsvButton" type="button" title="Export CSV" aria-label="Export CSV">CSV</button>
@@ -148,7 +149,14 @@
       </main>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js"></script>
+    <script src="config.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "@neondatabase/neon-js": "https://esm.sh/@neondatabase/neon-js@0.7.0-beta?bundle"
+        }
+      }
+    </script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>
