@@ -3,8 +3,8 @@ import {
   validateEmail,
   validateOtp,
   verifyEmailOtp,
-} from "./auth.js";
-import { neonClient } from "./neon-client.js";
+} from "./auth.js?v=4";
+import { neonClient } from "./neon-client.js?v=4";
 
 const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
@@ -98,6 +98,10 @@ async function migratePackPrices(scope, sync = false) {
 
 function setSyncStatus(message) {
   els.syncStatus.textContent = message;
+}
+
+function authFailureMessage(cause, fallback) {
+  return cause instanceof Error && cause.message ? cause.message : fallback;
 }
 
 function remoteEnabled() {
@@ -1006,7 +1010,16 @@ els.authForm.addEventListener("submit", async (event) => {
     authBusy = true;
     renderAuthControls();
     setSyncStatus("Posielam prihlasovaci kod...");
-    const { error } = await requestEmailOtp(neonClient, result.email);
+    let response;
+    try {
+      response = await requestEmailOtp(neonClient, result.email);
+    } catch (cause) {
+      authBusy = false;
+      renderAuthControls();
+      setSyncStatus(`Kod sa nepodarilo poslat: ${authFailureMessage(cause, "sietova chyba")}`);
+      return;
+    }
+    const { error } = response;
     authBusy = false;
     if (error) {
       renderAuthControls();
@@ -1030,7 +1043,16 @@ els.authForm.addEventListener("submit", async (event) => {
   authBusy = true;
   renderAuthControls();
   setSyncStatus("Overujem kod...");
-  const { data, error } = await verifyEmailOtp(neonClient, pendingAuthEmail, result.token);
+  let response;
+  try {
+    response = await verifyEmailOtp(neonClient, pendingAuthEmail, result.token);
+  } catch (cause) {
+    authBusy = false;
+    renderAuthControls();
+    setSyncStatus(`Kod sa nepodarilo overit: ${authFailureMessage(cause, "sietova chyba")}`);
+    return;
+  }
+  const { data, error } = response;
   authBusy = false;
   if (error) {
     renderAuthControls();

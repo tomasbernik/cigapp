@@ -1,12 +1,12 @@
-const CACHE_NAME = "cigapp-v3";
+const CACHE_NAME = "cigapp-v4";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
-  "./config.js",
-  "./auth.js",
-  "./neon-client.js",
-  "./app.js",
+  "./config.js?v=4",
+  "./auth.js?v=4",
+  "./neon-client.js?v=4",
+  "./app.js?v=4",
   "./manifest.webmanifest",
   "./icon.svg",
 ];

@@ -91,6 +91,7 @@ button {
   margin: -8px 0 14px;
   color: var(--muted);
   font-size: 0.9rem;
+  min-height: 1.4em;
 }
 
 .hidden {
