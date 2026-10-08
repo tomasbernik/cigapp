@@ -1,7 +1,8 @@
 import {
-  signInWithCredentials,
-  signUpWithCredentials,
-  validateCredentials,
+  requestEmailOtp,
+  validateEmail,
+  validateOtp,
+  verifyEmailOtp,
 } from "./auth.js";
 import { neonClient } from "./neon-client.js";
 
@@ -15,6 +16,8 @@ let currentUser = null;
 let remoteReady = false;
 let visibleCalendarDate = new Date();
 let selectedCalendarDay = dayKey();
+let pendingAuthEmail = "";
+let authBusy = false;
 const els = {
   currentCount: document.querySelector("#currentCount"),
   currentCapacity: document.querySelector("#currentCapacity"),
@@ -48,9 +51,10 @@ const els = {
   exportCsvButton: document.querySelector("#exportCsvButton"),
   clearDataButton: document.querySelector("#clearDataButton"),
   authForm: document.querySelector("#authForm"),
-  signUpButton: document.querySelector("#signUpButton"),
-  usernameInput: document.querySelector("#usernameInput"),
-  passwordInput: document.querySelector("#passwordInput"),
+  authSubmitButton: document.querySelector("#authSubmitButton"),
+  restartAuthButton: document.querySelector("#restartAuthButton"),
+  emailInput: document.querySelector("#emailInput"),
+  otpInput: document.querySelector("#otpInput"),
   signOutButton: document.querySelector("#signOutButton"),
   syncStatus: document.querySelector("#syncStatus"),
 };
@@ -563,7 +567,7 @@ function renderAuth() {
   } else if (currentUser) {
     setSyncStatus(`Prihlasene: ${displayNameForUser(currentUser)}. Nacitavam data...`);
   } else {
-    setSyncStatus("Lokalny rezim. Prihlas sa menom a heslom.");
+    setSyncStatus("Lokalny rezim. Prihlas sa e-mailom a jednorazovym kodom.");
   }
 }
 
@@ -961,21 +965,25 @@ els.clearDataButton.addEventListener("click", async () => {
   render();
 });
 
-function credentialsFromForm() {
-  const rawUsername = els.usernameInput.value;
-  const password = els.passwordInput.value;
-  const credentials = validateCredentials(rawUsername, password);
-  if (credentials.error) {
-    setSyncStatus(credentials.error);
-    return null;
-  }
-  return { ...credentials, password };
+function renderAuthControls() {
+  const awaitingCode = Boolean(pendingAuthEmail);
+  els.emailInput.readOnly = awaitingCode;
+  els.emailInput.disabled = authBusy;
+  els.otpInput.classList.toggle("hidden", !awaitingCode);
+  els.otpInput.disabled = authBusy || !awaitingCode;
+  els.otpInput.required = awaitingCode;
+  els.authSubmitButton.disabled = authBusy;
+  els.authSubmitButton.textContent = authBusy ? "Pockaj..." : awaitingCode ? "Overit kod" : "Poslat kod";
+  els.restartAuthButton.classList.toggle("hidden", !awaitingCode);
+  els.restartAuthButton.disabled = authBusy;
 }
 
 async function finishAuthentication(data) {
   currentUser = data?.user || data?.session?.user || null;
   remoteReady = false;
-  els.passwordInput.value = "";
+  pendingAuthEmail = "";
+  els.otpInput.value = "";
+  renderAuthControls();
 
   if (currentUser) {
     await loadRemoteState();
@@ -986,43 +994,59 @@ async function finishAuthentication(data) {
 
 els.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!neonClient) return;
+  if (!neonClient || authBusy) return;
 
-  const credentials = credentialsFromForm();
-  if (!credentials) return;
+  if (!pendingAuthEmail) {
+    const result = validateEmail(els.emailInput.value);
+    if (result.error) {
+      setSyncStatus(result.error);
+      return;
+    }
 
-  setSyncStatus("Prihlasujem...");
-  const { data, error } = await signInWithCredentials(neonClient, credentials.email, credentials.password);
+    authBusy = true;
+    renderAuthControls();
+    setSyncStatus("Posielam prihlasovaci kod...");
+    const { error } = await requestEmailOtp(neonClient, result.email);
+    authBusy = false;
+    if (error) {
+      renderAuthControls();
+      setSyncStatus(`Kod sa nepodarilo poslat: ${error.message}`);
+      return;
+    }
+
+    pendingAuthEmail = result.email;
+    renderAuthControls();
+    els.otpInput.focus();
+    setSyncStatus(`Kod bol poslany na ${pendingAuthEmail}. Skontroluj aj spam.`);
+    return;
+  }
+
+  const result = validateOtp(els.otpInput.value);
+  if (result.error) {
+    setSyncStatus(result.error);
+    return;
+  }
+
+  authBusy = true;
+  renderAuthControls();
+  setSyncStatus("Overujem kod...");
+  const { data, error } = await verifyEmailOtp(neonClient, pendingAuthEmail, result.token);
+  authBusy = false;
   if (error) {
-    setSyncStatus(`Prihlasenie zlyhalo: ${error.message}`);
+    renderAuthControls();
+    setSyncStatus(`Kod sa nepodarilo overit: ${error.message}`);
     return;
   }
   await finishAuthentication(data);
 });
 
-els.signUpButton.addEventListener("click", async () => {
-  if (!neonClient) return;
-
-  const credentials = credentialsFromForm();
-  if (!credentials) return;
-
-  setSyncStatus("Registrujem...");
-  const { data, error } = await signUpWithCredentials(
-    neonClient,
-    credentials.username,
-    credentials.email,
-    credentials.password,
-  );
-
-  if (error) {
-    setSyncStatus(
-      /already|registered|exists/i.test(error.message)
-        ? "Toto meno uz existuje. Prihlas sa spravnym heslom."
-        : `Registracia zlyhala: ${error.message}`,
-    );
-    return;
-  }
-  await finishAuthentication(data);
+els.restartAuthButton.addEventListener("click", () => {
+  if (authBusy) return;
+  pendingAuthEmail = "";
+  els.otpInput.value = "";
+  renderAuthControls();
+  els.emailInput.focus();
+  setSyncStatus("Zadaj e-mail, na ktory ti posleme novy prihlasovaci kod.");
 });
 
 els.signOutButton.addEventListener("click", async () => {
@@ -1039,6 +1063,7 @@ renderCurrentDay();
 renderPackOptions();
 updateDefaultPackPrice();
 migratePackPrices("local");
+renderAuthControls();
 render();
 
 if (neonClient) {

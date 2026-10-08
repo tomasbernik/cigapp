@@ -11,6 +11,7 @@ Mobilna webova appka na zapisovanie aktualneho stavu cigariet v otvorenej krabic
 - Casove bloky sa zobrazia az v prehlade.
 - Data sa ukladaju lokalne v prehliadaci a daju sa exportovat do CSV.
 - Po prihlaseni sa synchronizuju cez Neon Auth a Neon Data API; offline/localStorage rezim ostava dostupny.
+- Prihlasenie aj vytvorenie uctu pouziva sestmiestny jednorazovy kod poslany na e-mail; heslo nie je potrebne.
 
 ## Spustenie
 

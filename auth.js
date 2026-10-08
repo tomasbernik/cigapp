@@ -1,32 +1,24 @@
-export function normalizeUsername(value) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+export function normalizeEmail(value) {
+  return value.trim().toLowerCase();
 }
 
-export function authEmailForUsername(username) {
-  return `${username}@cigapp.invalid`;
+export function validateEmail(value) {
+  const email = normalizeEmail(value);
+  if (!email) return { error: "Zadaj e-mail." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Zadaj platny e-mail." };
+  return { email };
 }
 
-export function validateCredentials(rawUsername, password) {
-  const username = normalizeUsername(rawUsername);
-
-  if (!username || !password) return { error: "Vypln meno aj heslo." };
-  if (username.length < 3) return { error: "Meno musi mat aspon 3 znaky." };
-  if (password.length < 6) return { error: "Heslo musi mat aspon 6 znakov." };
-  if (username !== rawUsername.trim().toLowerCase()) {
-    return { error: "Meno moze obsahovat len pismena bez diakritiky, cisla, _ alebo -." };
-  }
-
-  return { username, email: authEmailForUsername(username) };
+export function validateOtp(value) {
+  const token = value.trim().replace(/\s/g, "");
+  if (!/^\d{6}$/.test(token)) return { error: "Zadaj sestmiestny kod z e-mailu." };
+  return { token };
 }
 
-export function signInWithCredentials(client, email, password) {
-  return client.auth.signInWithPassword({ email, password });
+export function requestEmailOtp(client, email) {
+  return client.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
 }
 
-export function signUpWithCredentials(client, username, email, password) {
-  return client.auth.signUp({
-    email,
-    password,
-    options: { data: { username, displayName: username } },
-  });
+export function verifyEmailOtp(client, email, token) {
+  return client.auth.verifyOtp({ email, token, type: "email" });
 }

@@ -9,9 +9,9 @@ old project during migration.
    tables in Supabase. Take an encrypted, access-controlled backup before any
    transformation.
 3. Establish each identity in Neon Auth. Supabase password hashes should not be
-   copied into Neon Auth. Have each user explicitly register the same CigApp
-   username in Neon, or use an approved one-time credential reset flow. Record a
-   temporary old-Supabase-UUID to new-Neon-UUID mapping; never commit it.
+   copied into Neon Auth. Use a deliverable email identity and numeric email OTP;
+   never create an account that can only receive mail at `cigapp.invalid`. Record
+   a temporary old-Supabase-UUID to new-Neon-UUID mapping; never commit it.
 4. With a one-off server-side migration script and credentials supplied only at
    runtime, export rows for mapped CigApp users from `packs`, `entries`, `days`,
    and `adjustments`. Reject rows belonging to unmapped users. Never put

@@ -2,47 +2,42 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  authEmailForUsername,
-  signInWithCredentials,
-  signUpWithCredentials,
-  validateCredentials,
+  normalizeEmail,
+  requestEmailOtp,
+  validateEmail,
+  validateOtp,
+  verifyEmailOtp,
 } from "../auth.js";
 
-test("username is mapped to the stable internal email", () => {
-  assert.equal(authEmailForUsername("tomas_1"), "tomas_1@cigapp.invalid");
-  assert.deepEqual(validateCredentials("Tomas_1", "secret1"), {
-    username: "tomas_1",
-    email: "tomas_1@cigapp.invalid",
+test("email is normalized and validated", () => {
+  assert.equal(normalizeEmail("  Tomas.Bernik@GMAIL.COM "), "tomas.bernik@gmail.com");
+  assert.deepEqual(validateEmail("  Tomas.Bernik@GMAIL.COM "), { email: "tomas.bernik@gmail.com" });
+  assert.match(validateEmail("tomas").error, /platny e-mail/);
+});
+
+test("OTP must contain exactly six digits", () => {
+  assert.deepEqual(validateOtp(" 123 456 "), { token: "123456" });
+  assert.match(validateOtp("12345").error, /sestmiestny/);
+  assert.match(validateOtp("12345a").error, /sestmiestny/);
+});
+
+test("requestEmailOtp delegates to Neon Auth", async () => {
+  let payload;
+  const client = { auth: { signInWithOtp: async (value) => ((payload = value), { data: {}, error: null }) } };
+  await requestEmailOtp(client, "tomas.bernik@gmail.com");
+  assert.deepEqual(payload, {
+    email: "tomas.bernik@gmail.com",
+    options: { shouldCreateUser: true },
   });
 });
 
-test("invalid username is rejected before an auth request", () => {
-  assert.match(validateCredentials("tomas!", "secret1").error, /Meno moze/);
-});
-
-test("failed sign-in never falls back to registration", async () => {
-  let signUpCalls = 0;
-  const client = {
-    auth: {
-      signInWithPassword: async () => ({ data: null, error: new Error("invalid credentials") }),
-      signUp: async () => {
-        signUpCalls += 1;
-      },
-    },
-  };
-
-  const result = await signInWithCredentials(client, "tomas@cigapp.invalid", "wrong-password");
-  assert.match(result.error.message, /invalid credentials/);
-  assert.equal(signUpCalls, 0);
-});
-
-test("registration happens only through the explicit registration action", async () => {
+test("verifyEmailOtp uses the email token type", async () => {
   let payload;
-  const client = { auth: { signUp: async (value) => ((payload = value), { data: {}, error: null }) } };
-  await signUpWithCredentials(client, "tomas", "tomas@cigapp.invalid", "secret1");
+  const client = { auth: { verifyOtp: async (value) => ((payload = value), { data: {}, error: null }) } };
+  await verifyEmailOtp(client, "tomas.bernik@gmail.com", "123456");
   assert.deepEqual(payload, {
-    email: "tomas@cigapp.invalid",
-    password: "secret1",
-    options: { data: { username: "tomas", displayName: "tomas" } },
+    email: "tomas.bernik@gmail.com",
+    token: "123456",
+    type: "email",
   });
 });
