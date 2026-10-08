@@ -18,6 +18,7 @@ let visibleCalendarDate = new Date();
 let selectedCalendarDay = dayKey();
 let pendingAuthEmail = "";
 let authBusy = false;
+let lastRemoteError = "";
 const els = {
   currentCount: document.querySelector("#currentCount"),
   currentCapacity: document.querySelector("#currentCapacity"),
@@ -668,24 +669,37 @@ async function loadRemoteState() {
   remoteReady = false;
   renderAuth();
 
+  let results;
+  try {
+    results = await Promise.all([
+      neonClient.from("packs").select("*").order("opened_at", { ascending: true }),
+      neonClient.from("entries").select("*").order("created_at", { ascending: true }),
+      neonClient.from("days").select("*").order("day", { ascending: true }),
+      neonClient.from("adjustments").select("*").order("created_at", { ascending: true }),
+    ]);
+  } catch (cause) {
+    lastRemoteError = authFailureMessage(cause, "sietova chyba");
+    setSyncStatus(`Neon chyba: ${lastRemoteError}`);
+    remoteReady = false;
+    return;
+  }
+
   const [
     { data: packs, error: packsError },
     { data: entries, error: entriesError },
     { data: days, error: daysError },
     { data: adjustments, error: adjustmentsError },
-  ] = await Promise.all([
-    neonClient.from("packs").select("*").order("opened_at", { ascending: true }),
-    neonClient.from("entries").select("*").order("created_at", { ascending: true }),
-    neonClient.from("days").select("*").order("day", { ascending: true }),
-    neonClient.from("adjustments").select("*").order("created_at", { ascending: true }),
-  ]);
+  ] = results;
 
   const error = packsError || entriesError || daysError || adjustmentsError;
   if (error) {
-    setSyncStatus(`Neon chyba: ${error.message}`);
+    lastRemoteError = error.message;
+    setSyncStatus(`Neon chyba: ${lastRemoteError}`);
     remoteReady = false;
     return;
   }
+
+  lastRemoteError = "";
 
   const localHasData = state.packs.length || state.entries.length || Object.keys(state.days).length || state.adjustments.length;
   const remoteHasData = packs.length || entries.length || days.length || adjustments.length;
@@ -714,12 +728,21 @@ async function loadRemoteState() {
 async function syncRemote(operation) {
   if (!remoteEnabled()) return true;
 
-  const { error } = await operation();
-  if (error) {
-    setSyncStatus(`Neon chyba: ${error.message}`);
+  let result;
+  try {
+    result = await operation();
+  } catch (cause) {
+    lastRemoteError = authFailureMessage(cause, "sietova chyba");
     return false;
   }
 
+  const { error } = result;
+  if (error) {
+    lastRemoteError = error.message;
+    return false;
+  }
+
+  lastRemoteError = "";
   renderAuth();
   return true;
 }
@@ -777,11 +800,14 @@ async function addEntry(remaining, options = {}) {
   };
   state.entries.push(entry);
   saveState();
-  await syncRemote(() => neonClient.from("entries").upsert(entryToRow(entry)));
+  const synced = await syncRemote(() => neonClient.from("entries").upsert(entryToRow(entry)));
   els.stateForm.reset();
-  els.saveHint.textContent = options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny.";
+  els.saveHint.textContent = synced
+    ? options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny."
+    : "Stav bol ulozeny lokalne; synchronizacia zlyhala.";
   updateMorningStateDefault();
   render();
+  if (!synced) setSyncStatus(`Neon chyba: ${lastRemoteError}`);
 }
 
 async function openPack(capacity, price) {
@@ -817,7 +843,7 @@ async function openPack(capacity, price) {
     createdAt: pack.openedAt,
   });
   saveState();
-  await syncRemote(async () => {
+  const synced = await syncRemote(async () => {
     const inactiveRows = state.packs.filter((item) => item.id !== pack.id).map(packToRow);
     const packResult = await neonClient.from("packs").upsert(packToRow(pack));
     if (packResult.error) return packResult;
@@ -833,6 +859,7 @@ async function openPack(capacity, price) {
   updateMorningStateDefault();
   updateDefaultPackPrice();
   render();
+  if (!synced) setSyncStatus(`Krabicka bola otvorena lokalne. Neon chyba: ${lastRemoteError}`);
 }
 
 function selectedCapacity() {
@@ -865,10 +892,11 @@ async function addAdjustment(date, amount, note) {
   };
   state.adjustments.push(adjustment);
   saveState();
-  await syncRemote(() => neonClient.from("adjustments").upsert(adjustmentToRow(adjustment)));
+  const synced = await syncRemote(() => neonClient.from("adjustments").upsert(adjustmentToRow(adjustment)));
   els.adjustmentAmountInput.value = "";
   els.adjustmentNoteInput.value = "";
   render();
+  if (!synced) setSyncStatus(`Oprava bola ulozena lokalne. Neon chyba: ${lastRemoteError}`);
 }
 
 function exportCsv() {
