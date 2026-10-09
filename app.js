@@ -3,8 +3,8 @@ import {
   validateEmail,
   validateOtp,
   verifyEmailOtp,
-} from "./auth.js?v=4";
-import { neonClient } from "./neon-client.js?v=4";
+} from "./auth.js?v=6";
+import { neonClient } from "./neon-client.js?v=6";
 
 const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
@@ -25,6 +25,7 @@ const els = {
   packRing: document.querySelector("#packRing"),
   packPercent: document.querySelector("#packPercent"),
   stateForm: document.querySelector("#stateForm"),
+  stateSubmitButton: document.querySelector("#stateSubmitButton"),
   remainingInput: document.querySelector("#remainingInput"),
   morningStateInput: document.querySelector("#morningStateInput"),
   saveHint: document.querySelector("#saveHint"),
@@ -373,6 +374,11 @@ function renderStatus() {
     els.packPercent.textContent = "0%";
     els.packRing.style.background = "conic-gradient(#e7edf4 0deg, #e7edf4 0deg)";
     els.remainingInput.max = "";
+    els.remainingInput.disabled = true;
+    els.stateSubmitButton.disabled = true;
+    els.saveHint.textContent = "Najprv otvor novu krabicku nizsie. Potom mozes zadat aktualny stav.";
+    els.packOptions.classList.remove("hidden");
+    els.openPackToggle.textContent = "Nastavenie novej krabicky";
     return;
   }
 
@@ -383,7 +389,13 @@ function renderStatus() {
   els.packPercent.textContent = `${percent}%`;
   els.packRing.style.background = `conic-gradient(var(--teal) ${percent * 3.6}deg, #e7edf4 0deg)`;
   els.remainingInput.max = String(pack.capacity);
+  els.remainingInput.disabled = false;
+  els.stateSubmitButton.disabled = false;
   els.remainingInput.placeholder = String(remaining);
+  els.openPackToggle.textContent = "Otvorit novu krabicku";
+  if (els.saveHint.textContent.startsWith("Najprv otvor novu krabicku")) {
+    els.saveHint.textContent = "Cas sa ulozi automaticky.";
+  }
 }
 
 function renderOverview() {
@@ -858,6 +870,7 @@ async function openPack(capacity, price) {
   });
   updateMorningStateDefault();
   updateDefaultPackPrice();
+  els.packOptions.classList.add("hidden");
   render();
   if (!synced) setSyncStatus(`Krabicka bola otvorena lokalne. Neon chyba: ${lastRemoteError}`);
 }
@@ -960,6 +973,11 @@ els.packForm.addEventListener("submit", (event) => {
 });
 
 els.openPackToggle.addEventListener("click", () => {
+  if (!activePack()) {
+    els.packOptions.classList.remove("hidden");
+    setSyncStatus("Vyber velkost a cenu a potvrď otvorenie novej krabicky.");
+    return;
+  }
   els.packOptions.classList.toggle("hidden");
 });
 
