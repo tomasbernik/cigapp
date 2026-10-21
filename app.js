@@ -3,11 +3,12 @@ import {
   validateEmail,
   validateOtp,
   verifyEmailOtp,
-} from "./auth.js?v=6";
-import { neonClient } from "./neon-client.js?v=6";
+} from "./auth.js?v=7";
+import { neonClient } from "./neon-client.js?v=7";
 
 const LEGACY_STORAGE_KEY = ["cig", "log-v1"].join("");
 const STORAGE_KEY = "cigapp-v1";
+const PENDING_STATE_PREFIX = "cigapp-pending-v1";
 const PACK_PRICE_MIGRATION = "pack-prices-2026-07";
 const DEFAULT_PACK_PRICES = { 30: 9.1, 40: 11.9 };
 const initialState = { packs: [], entries: [], days: {}, adjustments: [] };
@@ -34,6 +35,7 @@ const els = {
   packOptions: document.querySelector("#packOptions"),
   capacityInput: document.querySelector("#capacityInput"),
   packPriceInput: document.querySelector("#packPriceInput"),
+  packOpenedAtInput: document.querySelector("#packOpenedAtInput"),
   capacityChoices: [...document.querySelectorAll('input[name="capacityChoice"]')],
   adjustmentForm: document.querySelector("#adjustmentForm"),
   adjustmentDateInput: document.querySelector("#adjustmentDateInput"),
@@ -74,6 +76,32 @@ function loadState() {
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   localStorage.removeItem(LEGACY_STORAGE_KEY);
+}
+
+function pendingStateKey(user = currentUser) {
+  return user?.id ? `${PENDING_STATE_PREFIX}-${user.id}` : "";
+}
+
+function loadPendingState(user = currentUser) {
+  const key = pendingStateKey(user);
+  if (!key) return null;
+
+  try {
+    const pending = JSON.parse(localStorage.getItem(key));
+    return pending ? { ...initialState, ...pending, adjustments: pending.adjustments || [] } : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingState() {
+  const key = pendingStateKey();
+  if (key) localStorage.setItem(key, JSON.stringify(state));
+}
+
+function clearPendingState() {
+  const key = pendingStateKey();
+  if (key) localStorage.removeItem(key);
 }
 
 function packPriceMigrationKey(scope) {
@@ -579,7 +607,9 @@ function renderAuth() {
 
   els.authForm.classList.toggle("hidden", Boolean(currentUser));
   els.signOutButton.classList.toggle("hidden", !currentUser);
-  if (currentUser && remoteReady) {
+  if (currentUser && remoteReady && loadPendingState()) {
+    setSyncStatus(`Caka na synchronizaciu: ${displayNameForUser(currentUser)}`);
+  } else if (currentUser && remoteReady) {
     setSyncStatus(`Synchronizovane: ${displayNameForUser(currentUser)}`);
   } else if (currentUser) {
     setSyncStatus(`Prihlasene: ${displayNameForUser(currentUser)}. Nacitavam data...`);
@@ -713,6 +743,24 @@ async function loadRemoteState() {
 
   lastRemoteError = "";
 
+  const pendingState = loadPendingState();
+  if (pendingState) {
+    state = pendingState;
+    saveState();
+    remoteReady = true;
+
+    const recovered = await uploadFullState();
+    if (!recovered) {
+      setSyncStatus(`Lokalne zmeny cakaju na synchronizaciu. Neon chyba: ${lastRemoteError}`);
+      renderCurrentDay();
+      render();
+      return;
+    }
+
+    clearPendingState();
+    return loadRemoteState();
+  }
+
   const localHasData = state.packs.length || state.entries.length || Object.keys(state.days).length || state.adjustments.length;
   const remoteHasData = packs.length || entries.length || days.length || adjustments.length;
 
@@ -738,7 +786,11 @@ async function loadRemoteState() {
 }
 
 async function syncRemote(operation) {
-  if (!remoteEnabled()) return true;
+  if (!neonClient || !currentUser) return true;
+  if (!remoteReady) {
+    lastRemoteError = "synchronizacia este nie je pripravena";
+    return false;
+  }
 
   let result;
   try {
@@ -760,28 +812,48 @@ async function syncRemote(operation) {
 }
 
 async function uploadFullState() {
-  if (!remoteEnabled()) return true;
+  if (!remoteEnabled()) {
+    lastRemoteError = "synchronizacia este nie je pripravena";
+    return false;
+  }
 
   const packRows = state.packs.map(packToRow);
   const entryRows = state.entries.map(entryToRow);
   const dayRows = Object.entries(state.days).map(([key, day]) => dayToRow(key, day));
   const adjustmentRows = state.adjustments.map(adjustmentToRow);
 
-  const operations = [];
-  if (packRows.length) operations.push(neonClient.from("packs").upsert(packRows));
-  if (entryRows.length) operations.push(neonClient.from("entries").upsert(entryRows));
-  if (dayRows.length) operations.push(neonClient.from("days").upsert(dayRows));
-  if (adjustmentRows.length) operations.push(neonClient.from("adjustments").upsert(adjustmentRows));
+  const operations = [
+    packRows.length ? () => neonClient.from("packs").upsert(packRows) : null,
+    entryRows.length ? () => neonClient.from("entries").upsert(entryRows) : null,
+    dayRows.length ? () => neonClient.from("days").upsert(dayRows) : null,
+    adjustmentRows.length ? () => neonClient.from("adjustments").upsert(adjustmentRows) : null,
+  ].filter(Boolean);
 
-  const results = await Promise.all(operations);
-  const error = results.find((result) => result.error)?.error;
-  if (error) {
-    setSyncStatus(`Neon chyba: ${error.message}`);
+  try {
+    for (const operation of operations) {
+      const { error } = await operation();
+      if (error) {
+        lastRemoteError = error.message;
+        return false;
+      }
+    }
+  } catch (cause) {
+    lastRemoteError = authFailureMessage(cause, "sietova chyba");
     return false;
   }
 
+  lastRemoteError = "";
   renderAuth();
   return true;
+}
+
+async function syncSavedState() {
+  if (!currentUser) return true;
+
+  savePendingState();
+  const synced = await uploadFullState();
+  if (synced) clearPendingState();
+  return synced;
 }
 
 async function addEntry(remaining, options = {}) {
@@ -812,7 +884,7 @@ async function addEntry(remaining, options = {}) {
   };
   state.entries.push(entry);
   saveState();
-  const synced = await syncRemote(() => neonClient.from("entries").upsert(entryToRow(entry)));
+  const synced = await syncSavedState();
   els.stateForm.reset();
   els.saveHint.textContent = synced
     ? options.assignToPreviousDay ? "Stav ulozeny, rozdiel je zapocitany do vcera." : "Stav ulozeny."
@@ -822,16 +894,26 @@ async function addEntry(remaining, options = {}) {
   if (!synced) setSyncStatus(`Neon chyba: ${lastRemoteError}`);
 }
 
-async function openPack(capacity, price) {
+async function openPack(capacity, price, openedAt = new Date()) {
   const previousPack = activePack();
   const previousLast = previousPack ? latestEntry(previousPack.id) : null;
+  if (openedAt > new Date()) {
+    setSyncStatus("Cas otvorenia krabicky nemoze byt v buducnosti.");
+    return;
+  }
+  if (previousLast && openedAt < new Date(previousLast.createdAt)) {
+    setSyncStatus("Cas otvorenia nemoze byt pred poslednym ulozenym stavom starej krabicky.");
+    return;
+  }
+
+  const openedAtIso = openedAt.toISOString();
   const closedEntry =
     previousPack && (!previousLast || previousLast.remaining > 0)
       ? {
           id: id("entry"),
           packId: previousPack.id,
           remaining: 0,
-          createdAt: new Date().toISOString(),
+          createdAt: openedAtIso,
         }
       : null;
 
@@ -845,7 +927,7 @@ async function openPack(capacity, price) {
     capacity,
     price,
     active: true,
-    openedAt: new Date().toISOString(),
+    openedAt: openedAtIso,
   };
   state.packs.push(pack);
   state.entries.push({
@@ -855,21 +937,10 @@ async function openPack(capacity, price) {
     createdAt: pack.openedAt,
   });
   saveState();
-  const synced = await syncRemote(async () => {
-    const inactiveRows = state.packs.filter((item) => item.id !== pack.id).map(packToRow);
-    const packResult = await neonClient.from("packs").upsert(packToRow(pack));
-    if (packResult.error) return packResult;
-
-    if (inactiveRows.length) {
-      const inactiveResult = await neonClient.from("packs").upsert(inactiveRows);
-      if (inactiveResult.error) return inactiveResult;
-    }
-
-    const newEntries = [closedEntry, state.entries.at(-1)].filter(Boolean).map(entryToRow);
-    return neonClient.from("entries").upsert(newEntries);
-  });
+  const synced = await syncSavedState();
   updateMorningStateDefault();
   updateDefaultPackPrice();
+  els.packOpenedAtInput.value = "";
   els.packOptions.classList.add("hidden");
   render();
   if (!synced) setSyncStatus(`Krabicka bola otvorena lokalne. Neon chyba: ${lastRemoteError}`);
@@ -905,7 +976,7 @@ async function addAdjustment(date, amount, note) {
   };
   state.adjustments.push(adjustment);
   saveState();
-  const synced = await syncRemote(() => neonClient.from("adjustments").upsert(adjustmentToRow(adjustment)));
+  const synced = await syncSavedState();
   els.adjustmentAmountInput.value = "";
   els.adjustmentNoteInput.value = "";
   render();
@@ -969,7 +1040,12 @@ els.stateForm.addEventListener("submit", (event) => {
 els.packForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const price = els.packPriceInput.value === "" ? null : Number(els.packPriceInput.value);
-  openPack(selectedCapacity(), price);
+  const openedAt = els.packOpenedAtInput.value ? new Date(els.packOpenedAtInput.value) : new Date();
+  if (Number.isNaN(openedAt.getTime())) {
+    setSyncStatus("Zadaj platny cas otvorenia krabicky.");
+    return;
+  }
+  openPack(selectedCapacity(), price, openedAt);
 });
 
 els.openPackToggle.addEventListener("click", () => {
